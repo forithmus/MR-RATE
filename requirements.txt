@@ -1,0 +1,37 @@
+# Core deep learning
+torch>=2.0
+torchvision
+
+# Transformers & fine-tuning
+transformers>=4.51
+peft>=0.7
+accelerate>=0.25
+
+# Numerical & scientific
+einops>=0.6
+numpy>=1.24
+scipy>=1.10
+scikit-learn>=1.6
+pandas>=1.5
+
+# Medical imaging
+nibabel>=5.0
+
+# Image processing
+Pillow>=9.0
+
+# Text processing
+ftfy
+regex
+sentencepiece
+nltk
+
+# Utilities
+tqdm
+beartype
+ema-pytorch>=0.2.2
+torchtyping
+
+# Testing
+pytest>=7.0
+pytest-cov>=4.0
