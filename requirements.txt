@@ -26,6 +26,9 @@ regex
 sentencepiece
 nltk
 
+# Logging
+wandb
+
 # Utilities
 tqdm
 beartype
