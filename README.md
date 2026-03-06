@@ -289,3 +289,9 @@ python -m pytest --no-cov
 | `test_mr_rate_model.py` | MRRATE model init, forward, loss, serialization | 95% of core model |
 | `test_fusion_modes.py` | All 4 fusion modes x all pooling strategies | End-to-end forward pass |
 | `test_vision_encoder.py` | ResidualTemporalDownsample, VJEPA2 preprocessing | CNN shapes, gradients |
+
+## License
+
+We are committed to fostering innovation and collaboration in the research community. All elements of the MR-RATE codebase are released under the **Creative Commons Attribution–NonCommercial–ShareAlike (CC BY-NC-SA)** license.
+
+This allows the code to be freely used, modified, and shared for **non-commercial research purposes**, provided that the original work is properly cited and any derivative works are distributed under the same license.
