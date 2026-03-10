@@ -3,7 +3,7 @@
 [![Tests](https://github.com/forithmus/MR-RATE/actions/workflows/tests.yml/badge.svg)](https://github.com/forithmus/MR-RATE/actions/workflows/tests.yml)
 [![codecov](https://codecov.io/gh/forithmus/MR-RATE/branch/main/graph/badge.svg)](https://codecov.io/gh/forithmus/MR-RATE)
 
-Contrastive vision-language model for brain MRI that aligns multi-sequence MRI volumes and radiology reports using VL-CABS loss. Each subject has a variable number of volumes (2-12+, e.g. T1w, T2w, FLAIR, SWI, DWI) which are fused via configurable strategies. Supports multiple image spaces and normalization methods.
+Contrastive vision-language model for brain & spine MRI that aligns multi-sequence MRI volumes and radiology reports using VL-CABS loss. Each subject has a variable number of volumes (2-12+, e.g. T1w, T2w, FLAIR, SWI, DWI) which are fused via configurable strategies. Supports multiple image spaces and normalization methods.
 
 ## Architecture
 
