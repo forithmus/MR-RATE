@@ -49,7 +49,13 @@ data-preprocessing/
 │       ├── registration/
 │       │   ├── registration.py            # ANTs co-registration and atlas registration
 │       │   └── upload.py                  # Zip registration outputs and upload to HF
-│       └── reports_preprocessing/             # Report processing pipeline (coming soon)
+│       └── reports_preprocessing/             # Report anonymization, translation, structuring, QC
+│           ├── 01_anonymization/
+│           ├── 02_translation/
+│           ├── 03_translation_qc/
+│           ├── 04_structuring/
+│           ├── 05_structure_qc/
+│           └── utils/
 ├── tests/                                 # Coming soon
 └── figures/                               # Figures for submodule
 ```
@@ -80,7 +86,17 @@ Raw DICOM exports from PACS are noisy, heterogeneous, and contain patient-identi
 
 <!-- Figure placeholder: MR-RATE report preprocessing pipeline -->
 
-*(Coming soon)* PHI removal and re-oganization of radiology reports
+Raw Turkish radiology reports are converted to structured English through an iterative LLM-based pipeline using Qwen3.5-35B-A3B-FP8 via vLLM. Each step follows a **run → automated QC → retry → manual review** loop until quality thresholds are met. See [`reports_preprocessing/README.md`](src/mr_rate_preprocessing/reports_preprocessing/README.md) for full pipeline documentation.
+
+1. **[Anonymization](src/mr_rate_preprocessing/reports_preprocessing/01_anonymization/anonymize_reports_parallel.py)** — Replaces patient names, dates, hospitals, and other PHI with deterministic tokens (`[patient_1]`, `[date_1]`, etc.). Validated to ensure no PHI leakage.
+
+2. **[Translation](src/mr_rate_preprocessing/reports_preprocessing/02_translation/translate_reports_parallel.py)** — Turkish-to-English translation preserving medical terminology, anonymization tokens, and report structure.
+
+3. **[Translation QC](src/mr_rate_preprocessing/reports_preprocessing/03_translation_qc/)** — LLM-based quality check for translation completeness and accuracy, rule-based detection of remaining Turkish text, and automated retranslation of failures.
+
+4. **[Structuring](src/mr_rate_preprocessing/reports_preprocessing/04_structuring/)** — Extracts four sections from each report: `clinical_information`, `technique`, `findings`, and `impression`. Uses a two-pass approach with a no-think fallback for reports where chain-of-thought reasoning exhausts the token budget.
+
+5. **[Structure QC](src/mr_rate_preprocessing/reports_preprocessing/05_structure_qc/)** — LLM-based verification comparing structured output against the raw report, checking for missing content, hallucinations, and misplaced sections.
 
 ### Registration
 
@@ -211,7 +227,35 @@ Intermediate outputs are written to the paths defined in your config file, follo
 
 ### Radiology Report Preprocessing
 
-*(Coming soon)*
+Each pipeline step is a standalone parallel script designed for SLURM execution. Scripts are located in `src/mr_rate_preprocessing/reports_preprocessing/` and documented in its own [`README.md`](src/mr_rate_preprocessing/reports_preprocessing/README.md).
+
+Steps are run sequentially, with each step's output feeding the next. Within each step, the iterative QC loop is repeated until quality thresholds are met:
+
+```bash
+# 1. Anonymize raw Turkish reports
+srun python src/mr_rate_preprocessing/reports_preprocessing/01_anonymization/anonymize_reports_parallel.py \
+    --input_file data/raw/turkish_reports.csv --output_dir anonymized_shards
+
+# 2. Translate to English
+srun python src/mr_rate_preprocessing/reports_preprocessing/02_translation/translate_reports_parallel.py \
+    --input_file anonymized_reports.csv --output_dir translated_shards
+
+# 3. QC translations, retranslate failures, repeat
+srun python src/mr_rate_preprocessing/reports_preprocessing/03_translation_qc/quality_check_parallel.py \
+    --input_file translated_reports.csv --output_dir qc_shards
+
+# 4. Structure into sections
+srun python src/mr_rate_preprocessing/reports_preprocessing/04_structuring/structure_reports_parallel.py \
+    --input_file translated_reports.csv --output_dir structure_shards
+
+# 5. Verify structured output
+srun python src/mr_rate_preprocessing/reports_preprocessing/05_structure_qc/qc_llm_verify.py \
+    --input_file structured_reports.csv --output_dir qc_verify_shards
+
+# Merge any step's shards
+python src/mr_rate_preprocessing/reports_preprocessing/utils/merge_shards.py \
+    --shard_dir <shard_dir> --output <merged.csv>
+```
 
 ### Registration
 
