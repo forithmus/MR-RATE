@@ -22,10 +22,10 @@ Each step follows an iterative **run → QC → retry → re-QC** loop until qua
 │  01_ANONYMIZATION                                               │
 │  ├─ anonymize_reports_parallel.py                               │
 │  │   Replace patient names, dates, hospitals, radiologist       │
-│  │   names with tokens: [patient_1], [date_1], etc.            │
-│  └─ QC: validate_anonymization_parallel.py (utils/)            │
+│  │   names with tokens: [patient_1], [date_1], etc.             │
+│  └─ QC: validate_anonymization_parallel.py (utils/)             │
 │      Verify no PHI leakage, token consistency                   │
-│      ↻ Re-anonymize failures                                   │
+│      ↻ Re-anonymize failures                                    │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
@@ -34,20 +34,20 @@ Each step follows an iterative **run → QC → retry → re-QC** loop until qua
 │  ├─ translate_reports_parallel.py                               │
 │  │   Turkish → English translation preserving medical           │
 │  │   terminology, anonymization tokens, and report structure    │
-│  └─ QC: → step 03                                              │
+│  └─ QC: → step 03                                               │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  03_TRANSLATION_QC                                              │
 │  ├─ quality_check_parallel.py                                   │
-│  │   LLM-based QC: checks translation completeness,            │
+│  │   LLM-based QC: checks translation completeness,             │
 │  │   medical accuracy, token preservation                       │
 │  ├─ detect_turkish_parallel.py                                  │
 │  │   Detect remaining Turkish text in translations              │
 │  ├─ retranslate_parallel.py                                     │
 │  │   Re-translate QC failures with adjusted parameters          │
-│  └─ ↻ Repeat QC → retranslate until <1% failure rate           │
+│  └─ ↻ Repeat QC → retranslate until <1% failure rate            │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
@@ -63,29 +63,29 @@ Each step follows an iterative **run → QC → retry → re-QC** loop until qua
 │  │   - Multi-section: subsection titles (Cranial:, Cervical:)   │
 │  │                                                              │
 │  ├─ structure_nothink_parallel.py  (no-think fallback)          │
-│  │   For reports where thinking mode causes token exhaustion     │
+│  │   For reports where thinking mode causes token exhaustion    │
 │  │   Uses enable_thinking=False in chat template                │
-│  └─ ↻ Run → collect failures → retry with no-think → merge     │
+│  └─ ↻ Run → collect failures → retry with no-think → merge      │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  05_STRUCTURE_QC                                                │
-│  ├─ qc_llm_verify.py  (with thinking)                          │
+│  ├─ qc_llm_verify.py  (with thinking)                           │
 │  │   LLM compares structured output vs raw report               │
 │  │   Checks: missing content, hallucinations, wrong section     │
 │  │                                                              │
-│  ├─ qc_llm_verify_nothink.py  (no-think fallback)              │
+│  ├─ qc_llm_verify_nothink.py  (no-think fallback)               │
 │  │   For QC reports where thinking mode fails to parse          │
-│  └─ ↻ QC → fix failures → re-QC until pass rate >98%           │
+│  └─ ↻ QC → fix failures → re-QC until pass rate >98%            │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     STRUCTURED ENGLISH REPORTS                   │
-│  Per-batch CSVs: batch{NN}_reports.csv                  │
-│  Columns: Studiy_UID, report, clinical_information, technique,         │
-│           findings, impression                                   │
+│                     STRUCTURED ENGLISH REPORTS                  │
+│  Per-batch CSVs: batch{NN}_reports.csv                          │
+│  Columns: Studiy_UID, report, clinical_information, technique,  │
+│           findings, impression                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
