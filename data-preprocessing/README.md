@@ -6,7 +6,7 @@ This submodule contains the data preprocessing pipelines and scripts used for bu
 
 ## 🧠 Overview
 
-In MR-RATE, brain and spine MRI examinations are acquired from patients using MRI scanners and organised into multiple imaging sequence categories, including T1-weighted, T2-weighted, FLAIR, SWI, and MRA, constituting the series of a study. Then, each study is paired with associated metadata and a radiology report, which is produced by the radiologists during clinical interpretation. Together, these components constitute the MR-RATE dataset for multimodal brain and spine MRI research. Via preprocessing steps applied here, our goal is to convert raw, heterogeneous clinical data into a clean, anonymized, and spatially standardized collection that is ready for downstream machine learning and neuroscientific research.
+In MR-RATE, brain and spine MRI examinations are acquired from patients using MRI scanners and organized into multiple imaging sequence categories, including T1-weighted, T2-weighted, FLAIR, SWI, and MRA, constituting the series of a study. Then, each study is paired with associated metadata and a radiology report, which is produced by the radiologists during clinical interpretation. Together, these components constitute the MR-RATE dataset for multimodal brain and spine MRI research. Via preprocessing steps applied here, our goal is to convert raw, heterogeneous clinical data into a clean, anonymized, and spatially standardized collection that is ready for downstream machine learning and neuroscientific research.
 
 ## 📁 Directory Structure
 
@@ -68,7 +68,7 @@ Raw DICOM exports from PACS are noisy, heterogeneous, and contain patient-identi
 
 ![MR-RATE MRI and Metadata Preprocessing Pipeline](figures/mr-rate_mri_preproc_pipe.jpg)
 
-1. **[DICOM to NIfTI Conversion](src/mr_rate_preprocessing/mri_preprocessing/dcm2nii.py)** — Reads a CSV of DICOM folder paths, extracts the AccessionNumber from each folder's first DICOM file, and runs `dcm2niix` to produce gzip-compressed NIfTI files and JSON sidecars organised into per-accession subfolders.
+1. **[DICOM to NIfTI Conversion](src/mr_rate_preprocessing/mri_preprocessing/dcm2nii.py)** — Reads a CSV of DICOM folder paths, extracts the AccessionNumber from each folder's first DICOM file, and runs `dcm2niix` to produce gzip-compressed NIfTI files and JSON sidecars organized into per-accession subfolders.
 
 2. **[PACS Metadata Filtering](src/mr_rate_preprocessing/mri_preprocessing/pacs_metadata_filtering.py)** — Loads raw DICOM metadata exports from PACS, enforces required columns, retains as many optional columns as possible, and removes rows with missing critical identifiers or duplicate series.
 
@@ -105,13 +105,13 @@ Raw Turkish radiology reports are converted to structured English through an ite
 
 ### Registration
 
-Because different modalities within a study are acquired in different orientations and resolutions, they must be spatially aligned before any cross-modal analysis can be performed. Co-registration to a shared T1w reference and subsequent normalization to the MNI152 atlas puts all volumes into a common coordinate space, enabling direct voxel-wise comparisons across modalities and subjects, and allowing researchers to readily apply the registered data to their specific downstream tasks without additional alignment steps.
+Because different modalities within a study are acquired in different orientations and resolutions, they must be spatially aligned before any cross-modal analysis can be performed. Co-registration to a shared T1w reference and subsequent normalization to the MNI152 atlas put all volumes into a common coordinate space, enabling direct voxel-wise comparisons across modalities and subjects, and allowing researchers to readily apply the registered data to their specific downstream tasks without additional alignment steps.
 
 <!-- Figure placeholder: MR-RATE registration pipeline -->
 
 After MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where registration is performed independently.
 
-1. **[Registration](src/mr_rate_preprocessing/registration/registration.py)** —  In a similar approach to [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), within each study, moving modalities are co-registered to the T1-weighted center modality using [ANTs](https://github.com/antsx/ants). The center modality is then registered to the [MNI152 (ICBM 2009c Nonlinear Symmetric)](https://nist.mni.mcgill.ca/icbm-152-nonlinear-atlases-2009/) atlas, and all co-registered modalities are transformed to atlas space.
+1. **[Registration](src/mr_rate_preprocessing/registration/registration.py)** — Following a similar approach to [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), within each study, moving modalities are co-registered to the T1-weighted center modality using [ANTs](https://github.com/antsx/ants). The center modality is then registered to the [MNI152 (ICBM 2009c Nonlinear Symmetric)](https://nist.mni.mcgill.ca/icbm-152-nonlinear-atlases-2009/) atlas, and all co-registered modalities are transformed to atlas space.
 > For details on adaptations to `BrainLes-Preprocessing`, see [Why is this specific MRI preprocessing?](docs/dataset_guide.md#why-is-this-specific-mri-preprocessing).
 
 2. **[Upload to HF](src/mr_rate_preprocessing/registration/upload.py)** — Zips each registered study folder, and uploads the zip files to the Hugging Face dataset repository in parallel.
@@ -122,7 +122,7 @@ After MRI & Metadata Preprocessing is run, processed and uploaded studies are do
 
 <!-- Figure placeholder: MR-RATE multi-label brain segmentation pipeline -->
 
-*(Coming soon)* Similar to registration, after MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where segmentation is performed independently. Voxel-wise anatomical segmentations are predicted for center modality volumes in native space using [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) model based on [VISTA3D](https://github.com/Project-MONAI/VISTA/tree/main/vista3d), supporting region-of-interest analysis and various downstream tasks.
+*(Coming soon)* Similar to registration, after MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where segmentation is performed independently. Voxel-wise anatomical segmentations are predicted for center modality volumes in native space using the [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) model based on [VISTA3D](https://github.com/Project-MONAI/VISTA/tree/main/vista3d), supporting region-of-interest analysis and various downstream tasks.
 
 ## ⬇️ Standalone Data Downloading Scripts
 
@@ -227,9 +227,9 @@ All MRI pipeline steps are driven by a single YAML config file. Batch configs ar
    <repo_id> (Hugging Face dataset)
    ├── mri/
    │   └── batchXX/
-   │       └── <study_uid>.zip          # Uploaded by step 5
+   │       └── <study_uid>.zip          # Uploaded by step 6
    └── metadata/
-       └── batchXX_metadata.csv         # Uploaded by step 6
+       └── batchXX_metadata.csv         # Uploaded by step 7
    ```
 
 Intermediate outputs are written to the paths defined in your config file, following the `data/interim/` → `data/processed/` convention.
@@ -272,7 +272,7 @@ python src/mr_rate_preprocessing/reports_preprocessing/utils/merge_shards.py \
 
 ### Registration
 
-No runner scripts or config for registration pipeline as there are two blocks to be run independently.
+There are no runner scripts or config files for the registration pipeline, as there are two blocks to be run independently.
 
 1. **Download a batch from Hugging Face:**
 
@@ -421,7 +421,7 @@ All four repositories are gated. Make sure you have access.
 | `--atlas` | off | `Forithmus/MR-RATE-atlas` | `_atlas` | `./data/MR-RATE-atlas/` |
 | `--vista-seg` | off | `Forithmus/MR-RATE-vista-seg` | `_vista-seg` | `./data/MR-RATE-vista-seg/` |
 
-Pass `--no-mri` to disable all MRI downloads (metadata/reports only) . Metadata and reports are always fetched from `Forithmus/MR-RATE` into `./data/MR-RATE/`. Pass `--no-metadata` and/or `--no-reports` to disable metadata and/or reports downloads. Pass `--xet-high-perf` to enable Hugging Face's high-performance Xet transfer backend, which uses all available CPUs and maximum bandwidth. If you haven't deleted zip-files, downloads are resumable: `snapshot_download` skips zip files already present locally.
+Pass `--no-mri` to disable all MRI downloads (metadata/reports only). Metadata and reports are always fetched from `Forithmus/MR-RATE` into `./data/MR-RATE/`. Pass `--no-metadata` and/or `--no-reports` to disable metadata and/or reports downloads. Pass `--xet-high-perf` to enable Hugging Face's high-performance Xet transfer backend, which uses all available CPUs and maximum bandwidth. If you haven't deleted zip-files, downloads are resumable: `snapshot_download` skips zip files already present locally.
 
 ```bash
 # Some examples:
@@ -430,12 +430,12 @@ Pass `--no-mri` to disable all MRI downloads (metadata/reports only) . Metadata 
 python scripts/hf/download.py \
     --batches all --unzip --delete-zips --no-metadata --no-reports --xet-high-perf
 
-#Download metadata plus co-registered and atlas registered MRI for specific batches, no native:
+# Download metadata plus co-registered and atlas registered MRI for specific batches, no native:
 python scripts/hf/download.py \
     --batches 00,01 --no-native --coreg --atlas \
     --no-reports --unzip --delete-zips
 
-#Download all modalities with a custom output base:
+# Download all modalities with a custom output base:
 python scripts/hf/download.py \
     --native --coreg --atlas --vista-seg \
     --no-metadata --no-reports --output-base /data
@@ -540,10 +540,10 @@ meta = pd.read_csv("data/MR-RATE/metadata/batch00_metadata.csv", dtype={"patient
 # Load reports
 reports = pd.read_csv("data/MR-RATE/reports/batch00_reports.csv", low_memory=False)
 
-# Load patient-level splits
+# Load patient-level assigned study splits
 splits = pd.read_csv("data/MR-RATE/splits.csv", usecols=["study_uid", "split"], low_memory=False)
 
-# Apply patient-level splits
+# Apply patient-level assigned study splits
 meta_with_split = meta.merge(splits, on="study_uid")
 train_meta = meta_with_split[meta_with_split["split"] == "train"]
 
