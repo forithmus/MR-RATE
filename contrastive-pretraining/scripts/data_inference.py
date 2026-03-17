@@ -12,6 +12,7 @@ Returns: (images, sentences, subject_id, real_volume_mask)
 """
 
 import os
+import csv
 import json
 import numpy as np
 import torch
@@ -40,16 +41,16 @@ class MRReportDatasetInfer(Dataset):
         target_spacing=(1.5, 0.75, 0.75),
         target_shape=(256, 480, 480),
         final_spatial_size=(384, 384),
-        space="native_space",
         normalizer="zscore",
         normalizer_kwargs=None,
         labels_file=None,
+        splits_csv=None,
+        split="test",
     ):
         self.data_folder = data_folder
         self.target_spacing = target_spacing
         self.target_shape = target_shape
         self.final_spatial_size = final_spatial_size
-        self.space = space
 
         # Initialize normalizer
         if normalizer not in NORMALIZERS:
@@ -59,6 +60,9 @@ class MRReportDatasetInfer(Dataset):
             )
         normalizer_kwargs = normalizer_kwargs or {}
         self.normalizer_obj = NORMALIZERS[normalizer](**normalizer_kwargs)
+
+        # Load split filter
+        self.split_uids = self._load_splits(splits_csv, split) if splits_csv else None
 
         # Load reports
         self.subject_to_sentences = self._load_jsonl(jsonl_file)
@@ -77,6 +81,17 @@ class MRReportDatasetInfer(Dataset):
         if self.label_columns:
             print(f"[MRReportDatasetInfer] Labels loaded: {len(self.label_columns)} classes")
 
+    @staticmethod
+    def _load_splits(splits_csv, split):
+        """Load study UIDs belonging to a given split (train/val/test)."""
+        uids = set()
+        with open(splits_csv, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row['split'] == split:
+                    uids.add(row['study_uid'])
+        return uids
+
     def _load_jsonl(self, jsonl_path):
         """Load subject sentences from JSONL file."""
         mapping = {}
@@ -85,54 +100,62 @@ class MRReportDatasetInfer(Dataset):
                 try:
                     data = json.loads(line)
                     if data.get('valid_json', False) and len(data.get('extracted_sentences', [])) > 0:
-                        mapping[data['subject_id']] = data['extracted_sentences']
+                        uid = data['volume_name']
+                        if self.split_uids is not None and uid not in self.split_uids:
+                            continue
+                        mapping[uid] = data['extracted_sentences']
                 except Exception:
                     continue
         return mapping
 
     def _load_labels(self, labels_file):
-        """Load labels CSV: first column = subject_id, rest = binary label columns."""
-        import csv
+        """Load labels CSV: first column = study_uid, rest = binary label columns."""
         with open(labels_file, 'r') as f:
             reader = csv.DictReader(f)
-            self.label_columns = [c for c in reader.fieldnames if c != 'subject_id']
+            id_col = 'study_uid' if 'study_uid' in reader.fieldnames else 'subject_id'
+            self.label_columns = [c for c in reader.fieldnames if c not in (id_col,)]
             for row in reader:
-                sid = row['subject_id']
+                sid = row[id_col]
                 self.subject_to_labels[sid] = np.array(
                     [float(row[c]) for c in self.label_columns], dtype=np.float32
                 )
 
     def _prepare_samples(self, data_folder):
-        """Scan data_folder for subject directories with {space}/img/*.nii.gz files."""
+        """Scan data_folder/batchXX/<study_uid>/img/ for NIfTI files."""
         samples = []
 
-        for subject_id in sorted(os.listdir(data_folder)):
-            img_dir = os.path.join(data_folder, subject_id, self.space, 'img')
-            if not os.path.isdir(img_dir):
+        for batch_dir in sorted(os.listdir(data_folder)):
+            batch_path = os.path.join(data_folder, batch_dir)
+            if not os.path.isdir(batch_path):
                 continue
 
-            if subject_id not in self.subject_to_sentences:
-                continue
+            for study_uid in sorted(os.listdir(batch_path)):
+                img_dir = os.path.join(batch_path, study_uid, 'img')
+                if not os.path.isdir(img_dir):
+                    continue
 
-            nii_files = sorted([
-                os.path.join(img_dir, f)
-                for f in os.listdir(img_dir)
-                if f.endswith('.nii.gz')
-            ])
+                if study_uid not in self.subject_to_sentences:
+                    continue
 
-            if len(nii_files) == 0:
-                continue
+                nii_files = sorted([
+                    os.path.join(img_dir, f)
+                    for f in os.listdir(img_dir)
+                    if f.endswith('.nii.gz')
+                ])
 
-            sample = {
-                'subject_id': subject_id,
-                'image_paths': nii_files,
-                'sentences': self.subject_to_sentences[subject_id],
-            }
+                if len(nii_files) == 0:
+                    continue
 
-            if subject_id in self.subject_to_labels:
-                sample['labels'] = self.subject_to_labels[subject_id]
+                sample = {
+                    'subject_id': study_uid,
+                    'image_paths': nii_files,
+                    'sentences': self.subject_to_sentences[study_uid],
+                }
 
-            samples.append(sample)
+                if study_uid in self.subject_to_labels:
+                    sample['labels'] = self.subject_to_labels[study_uid]
+
+                samples.append(sample)
 
         return samples
 

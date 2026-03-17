@@ -133,7 +133,8 @@ class MrRateTrainer(nn.Module):
             # MR dataset parameters
             data_folder=None,
             jsonl_file=None,
-            space="native_space",
+            splits_csv=None,
+            split="train",
             normalizer="zscore",
             normalizer_kwargs=None,
 
@@ -210,9 +211,10 @@ class MrRateTrainer(nn.Module):
             data_folder=data_folder,
             jsonl_file=jsonl_file,
             max_sentences_per_image=max_sentences_per_image,
-            space=space,
             normalizer=normalizer,
             normalizer_kwargs=normalizer_kwargs,
+            splits_csv=splits_csv,
+            split=split,
         )
 
         self.print(f"[Trainer] Dataset initialized with {len(self.ds)} subjects")

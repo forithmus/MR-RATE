@@ -3,7 +3,7 @@ MR-RATE Inference Script.
 
 Adapted from RAD-RATE fast_inference_new.py for brain MRI with:
 - Variable volumes per subject (2-12+)
-- Configurable space (native_space, atlas_space, coreg_space)
+- Train/val/test split filtering via splits CSV
 - Configurable normalization (zscore, percentile, minmax)
 - Text-guided zero-shot classification with configurable pathology prompts
 - Optional evaluation if labels are provided
@@ -11,10 +11,11 @@ Adapted from RAD-RATE fast_inference_new.py for brain MRI with:
 Usage:
     python inference.py \
         --weights_path ./mr_rate_results/MrRate.5000.pt \
-        --data_folder /path/to/data \
-        --jsonl_file /path/to/reports.jsonl \
+        --data_folder /path/to/mri \
+        --jsonl_file /path/to/findings_sentences.jsonl \
         --fusion_mode late \
-        --space native_space \
+        --splits_csv /path/to/splits.csv \
+        --split test \
         --normalizer zscore
 """
 
@@ -96,10 +97,11 @@ class MrRateInference(nn.Module):
         results_folder='./inference_results',
         fusion_mode="late",
         pooling_strategy="simple_attn",
-        space="native_space",
         normalizer="zscore",
         normalizer_kwargs=None,
         labels_file=None,
+        splits_csv=None,
+        split="test",
         pathologies=None,
         accelerate_kwargs: dict = dict(),
     ):
@@ -122,10 +124,11 @@ class MrRateInference(nn.Module):
         self.ds = MRReportDatasetInfer(
             data_folder=data_folder,
             jsonl_file=jsonl_file,
-            space=space,
             normalizer=normalizer,
             normalizer_kwargs=normalizer_kwargs,
             labels_file=labels_file,
+            splits_csv=splits_csv,
+            split=split,
         )
 
         self.device = self.accelerator.device
@@ -392,9 +395,11 @@ if __name__ == "__main__":
     parser.add_argument('--labels_file', type=str, default=None,
                         help='Path to labels CSV (optional, for evaluation)')
 
-    # Space and normalization
-    parser.add_argument('--space', type=str, default='native_space',
-                        choices=['native_space', 'atlas_space', 'coreg_space'])
+    # Splits and normalization
+    parser.add_argument('--splits_csv', type=str, default=None,
+                        help='Path to splits CSV with columns: batch_id, patient_uid, study_uid, split')
+    parser.add_argument('--split', type=str, default='test',
+                        choices=['train', 'val', 'test'])
     parser.add_argument('--normalizer', type=str, default='zscore',
                         choices=['zscore', 'percentile', 'minmax'])
 
@@ -416,7 +421,8 @@ if __name__ == "__main__":
     print(f"{'='*60}")
     print(f"Fusion Mode:      {args.fusion_mode}")
     print(f"Pooling Strategy: {args.pooling_strategy}")
-    print(f"Space:            {args.space}")
+    print(f"Splits CSV:       {args.splits_csv}")
+    print(f"Split:            {args.split}")
     print(f"Normalizer:       {args.normalizer}")
     print(f"{'='*60}\n")
 
@@ -465,9 +471,10 @@ if __name__ == "__main__":
         results_folder=args.results_folder,
         fusion_mode=args.fusion_mode,
         pooling_strategy=args.pooling_strategy,
-        space=args.space,
         normalizer=args.normalizer,
         labels_file=args.labels_file,
+        splits_csv=args.splits_csv,
+        split=args.split,
         pathologies=pathologies,
     )
 

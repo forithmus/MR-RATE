@@ -26,9 +26,11 @@ parser.add_argument('--num_train_steps', type=int, default=100001)
 parser.add_argument('--lr', type=float, default=1e-5)
 parser.add_argument('--pretrained_weights', type=str, default=None,
                     help='Path to pretrained RAD-RATE weights to initialize from')
-parser.add_argument('--space', type=str, default='native_space',
-                    choices=['native_space', 'atlas_space', 'coreg_space'],
-                    help='Image space subfolder to load from (default: native_space)')
+parser.add_argument('--splits_csv', type=str, default=None,
+                    help='Path to splits CSV with columns: batch_id, patient_uid, study_uid, split')
+parser.add_argument('--split', type=str, default='train',
+                    choices=['train', 'val', 'test'],
+                    help='Which split to use for training (default: train)')
 parser.add_argument('--normalizer', type=str, default='zscore',
                     choices=['zscore', 'percentile', 'minmax'],
                     help='Volume normalization method (default: zscore)')
@@ -50,7 +52,8 @@ print(f"Fusion Mode: {FUSION_MODE}")
 print(f"Pooling Strategy: {POOLING_STRATEGY}")
 print(f"Data Folder: {args.data_folder}")
 print(f"JSONL File: {args.jsonl_file}")
-print(f"Space: {args.space}")
+print(f"Splits CSV: {args.splits_csv}")
+print(f"Split: {args.split}")
 print(f"Normalizer: {args.normalizer}")
 print(f"Resume: {args.resume}")
 print(f"W&B: {args.wandb}")
@@ -88,7 +91,7 @@ print("\n--- Initializing Trainer ---")
 wandb_config = {
     'fusion_mode': FUSION_MODE,
     'pooling_strategy': POOLING_STRATEGY,
-    'space': args.space,
+    'split': args.split,
     'normalizer': args.normalizer,
     'lr': args.lr,
     'num_train_steps': args.num_train_steps,
@@ -98,13 +101,14 @@ trainer = MrRateTrainer(
     clip,
     data_folder=args.data_folder,
     jsonl_file=args.jsonl_file,
+    splits_csv=args.splits_csv,
+    split=args.split,
     batch_size=1,
     num_train_steps=args.num_train_steps,
     lr=args.lr,
     warmup_steps=500,
     save_model_every=500,
     results_folder=args.results_folder,
-    space=args.space,
     normalizer=args.normalizer,
     resume=args.resume,
     use_wandb=args.wandb,
