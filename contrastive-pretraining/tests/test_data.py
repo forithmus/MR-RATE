@@ -244,7 +244,6 @@ class TestMRReportDataset:
             jsonl_file=synthetic_dataset["jsonl_path"],
             max_sentences_per_image=5,
             target_shape=(8, 8, 8),
-            final_spatial_size=(8, 8),
         )
         volume_stack, sentences, mask = ds[0]
         n_vols = len(ds.samples[0]["image_paths"])
@@ -261,7 +260,6 @@ class TestMRReportDataset:
             jsonl_file=synthetic_dataset["jsonl_path"],
             max_sentences_per_image=5,
             target_shape=(8, 8, 8),
-            final_spatial_size=(8, 8),
         )
         _, sentences, mask = ds[0]
         assert mask[:3].all()       # 3 real sentences
@@ -301,7 +299,6 @@ class TestMRReportDataset:
             jsonl_file=synthetic_dataset["jsonl_path"],
             max_sentences_per_image=5,
             target_shape=(8, 8, 8),
-            final_spatial_size=(8, 8),
         )
         item = ds[0]
         images, sentences, masks = collate_fn([item])

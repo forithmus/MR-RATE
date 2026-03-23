@@ -135,6 +135,7 @@ class MrRateTrainer(nn.Module):
             jsonl_file=None,
             splits_csv=None,
             split="train",
+            space="native_space",
             normalizer="zscore",
             normalizer_kwargs=None,
 
@@ -211,6 +212,7 @@ class MrRateTrainer(nn.Module):
             data_folder=data_folder,
             jsonl_file=jsonl_file,
             max_sentences_per_image=max_sentences_per_image,
+            space=space,
             normalizer=normalizer,
             normalizer_kwargs=normalizer_kwargs,
             splits_csv=splits_csv,

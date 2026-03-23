@@ -112,19 +112,22 @@ class MRReportDataset(Dataset):
         data_folder,
         jsonl_file,
         max_sentences_per_image=34,
-        target_spacing=(1.5, 0.75, 0.75),
-        target_shape=(256, 480, 480),
-        final_spatial_size=(384, 384),
+        target_spacing=(1.0, 0.5, 0.5),
+        target_shape=(256, 384, 384),
+        posterior_shift_mm=15.0,
+        space="native_space",
         normalizer="zscore",
         normalizer_kwargs=None,
         splits_csv=None,
         split="train",
     ):
         self.data_folder = data_folder
+        self.space = space
         self.max_sentences = max_sentences_per_image
         self.target_spacing = target_spacing
         self.target_shape = target_shape
-        self.final_spatial_size = final_spatial_size
+        # Posterior shift in voxels on Y axis (W dim) to compensate for defacing
+        self.posterior_shift_voxels = int(round(posterior_shift_mm / target_spacing[2]))
 
         # Initialize normalizer
         if normalizer not in NORMALIZERS:
@@ -175,58 +178,87 @@ class MRReportDataset(Dataset):
         return mapping
 
     def _prepare_samples(self, data_folder):
-        """Scan data_folder/batchXX/<study_uid>/img/ for NIfTI files."""
+        """Scan data_folder for NIfTI files.
+
+        Supports two directory layouts:
+          1) data_folder/<study_uid>/<space>/img/*.nii.gz
+          2) data_folder/batchXX/<study_uid>/img/*.nii.gz  (legacy HuggingFace layout)
+
+        Layout is auto-detected: if the first subdirectory contains a <space>
+        subfolder, layout 1 is used; otherwise layout 2.
+        """
         samples = []
 
-        for batch_dir in sorted(os.listdir(data_folder)):
-            batch_path = os.path.join(data_folder, batch_dir)
-            if not os.path.isdir(batch_path):
-                continue
+        # Auto-detect layout by checking first subject directory
+        first_level_dirs = sorted([
+            d for d in os.listdir(data_folder)
+            if os.path.isdir(os.path.join(data_folder, d))
+        ])
+        if not first_level_dirs:
+            return samples
 
-            for study_uid in sorted(os.listdir(batch_path)):
-                img_dir = os.path.join(batch_path, study_uid, 'img')
-                if not os.path.isdir(img_dir):
-                    continue
+        # Check if first entry has a <space> subfolder -> layout 1
+        first_dir = os.path.join(data_folder, first_level_dirs[0])
+        use_space_layout = os.path.isdir(os.path.join(first_dir, self.space))
 
-                if study_uid not in self.subject_to_sentences:
-                    continue
-
-                nii_files = sorted([
-                    os.path.join(img_dir, f)
-                    for f in os.listdir(img_dir)
-                    if f.endswith('.nii.gz')
-                ])
-
-                if len(nii_files) == 0:
-                    continue
-
-                samples.append({
-                    'subject_id': study_uid,
-                    'image_paths': nii_files,
-                    'sentences': self.subject_to_sentences[study_uid],
-                })
+        if use_space_layout:
+            # Layout 1: data_folder/<study_uid>/<space>/img/
+            for study_uid in first_level_dirs:
+                img_dir = os.path.join(data_folder, study_uid, self.space, 'img')
+                self._add_subject(samples, study_uid, img_dir)
+        else:
+            # Layout 2: data_folder/batchXX/<study_uid>/img/
+            for batch_dir in first_level_dirs:
+                batch_path = os.path.join(data_folder, batch_dir)
+                for study_uid in sorted(os.listdir(batch_path)):
+                    img_dir = os.path.join(batch_path, study_uid, 'img')
+                    self._add_subject(samples, study_uid, img_dir)
 
         return samples
+
+    def _add_subject(self, samples, study_uid, img_dir):
+        """Add a subject to samples if it has matching reports and NIfTI files."""
+        if not os.path.isdir(img_dir):
+            return
+        if study_uid not in self.subject_to_sentences:
+            return
+
+        nii_files = sorted([
+            os.path.join(img_dir, f)
+            for f in os.listdir(img_dir)
+            if f.endswith('.nii.gz')
+        ])
+
+        if len(nii_files) == 0:
+            return
+
+        samples.append({
+            'subject_id': study_uid,
+            'image_paths': nii_files,
+            'sentences': self.subject_to_sentences[study_uid],
+        })
 
     def __len__(self):
         return len(self.samples)
 
     def load_and_resample_nii(self, path):
-        """Load NIfTI, resample to target spacing using header info."""
+        """Load NIfTI, reorient to RAS, resample to target spacing."""
         nii_img = nib.load(str(path))
+        # Reorient to canonical RAS so axes are always (R, A, S)
+        nii_img = nib.as_closest_canonical(nii_img)
+
         img_data = nii_img.get_fdata().astype(np.float32)
         np.nan_to_num(img_data, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-        header = nii_img.header
-        voxel_sizes = header.get_zooms()
-
+        voxel_sizes = nii_img.header.get_zooms()
         if len(voxel_sizes) >= 3:
+            # RAS: dim0=R(X), dim1=A(Y), dim2=S(Z)
+            # Transpose to (Z, X, Y) = (D, H, W)
             current_spacing = (float(voxel_sizes[2]), float(voxel_sizes[0]), float(voxel_sizes[1]))
         else:
             current_spacing = (1.0, 1.0, 1.0)
 
-        # Transpose to (D, H, W)
-        img_data = img_data.transpose(2, 0, 1)
+        img_data = img_data.transpose(2, 0, 1)  # (X, Y, Z) -> (Z, X, Y)
         tensor = torch.from_numpy(img_data).unsqueeze(0).unsqueeze(0)
         resampled = resize_array(tensor, current_spacing, self.target_spacing)[0, 0]
 
@@ -236,17 +268,30 @@ class MRReportDataset(Dataset):
         """Normalize volume using the configured normalizer."""
         return self.normalizer_obj.normalize(data)
 
-    def crop_pad_and_resize(self, data):
-        """Crop/pad to target_shape, then resize spatial dims to final_spatial_size."""
+    def crop_or_pad(self, data):
+        """Center crop or pad to target_shape (D, H, W).
+
+        W axis (Y in RAS = anterior-posterior) is shifted posteriorly
+        by self.posterior_shift_voxels to compensate for defacing.
+        If the shift pushes past the posterior edge, crop starts from index 0.
+        """
         tensor = torch.from_numpy(data.astype(np.float32))
 
         td, th, tw = self.target_shape
         d, h, w = tensor.shape
 
-        # Center crop if larger
+        # Center crop start indices
         d_start = max((d - td) // 2, 0)
         h_start = max((h - th) // 2, 0)
-        w_start = max((w - tw) // 2, 0)
+
+        # W axis (Y/AP): shift center posteriorly (toward lower index in RAS)
+        w_center = w // 2 - self.posterior_shift_voxels
+        w_start = w_center - tw // 2
+        # Clamp: if shifted past posterior edge, start from 0
+        w_start = max(w_start, 0)
+        # Clamp: don't exceed anterior edge either
+        w_start = min(w_start, max(w - tw, 0))
+
         tensor = tensor[d_start:d_start + td, h_start:h_start + th, w_start:w_start + tw]
 
         # Pad if smaller
@@ -259,12 +304,7 @@ class MRReportDataset(Dataset):
 
         tensor = F.pad(tensor, (pad_w_before, pad_w_after, pad_h_before, pad_h_after, pad_d_before, pad_d_after), value=0)
 
-        # Resize spatial dimensions: [D, H, W] -> [D, final_H, final_W]
-        tensor = tensor.unsqueeze(1)  # [D, 1, H, W]
-        tensor = F.interpolate(tensor, size=self.final_spatial_size, mode='bilinear', align_corners=False)
-        tensor = tensor.squeeze(1).unsqueeze(0)  # [1, D, H, W]
-
-        return tensor.to(torch.bfloat16)
+        return tensor.unsqueeze(0).to(torch.bfloat16)  # [1, D, H, W]
 
     def __getitem__(self, index):
         sample = self.samples[index]
@@ -277,7 +317,7 @@ class MRReportDataset(Dataset):
         for vi, path in enumerate(sample['image_paths']):
             resampled = self.load_and_resample_nii(path)
             normalized = self.normalize_volume(resampled)
-            tensor = self.crop_pad_and_resize(normalized)  # [1, D, H, W]
+            tensor = self.crop_or_pad(normalized)  # [1, D, H, W]
             volume_tensors.append(tensor)
             if vi == 0:
                 print(f"[Dataset]   vol 0 loaded: {tensor.shape}", flush=True)
