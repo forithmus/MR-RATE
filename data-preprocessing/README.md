@@ -407,152 +407,166 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
 
 1. **Follow [⚙️ Installation](#%EF%B8%8F-installation) steps 1 & 3 (if you haven't done so already)**
 
-All four repositories are gated. Make sure you have access.
-
+    All four repositories are gated. Make sure you have access.
 
 2. **Download Repos**
 
-[`scripts/hf/download.py`](scripts/hf/download.py) is a standalone script that downloads any combination of data from the four MR-RATE repositories. Each repo is written to its own subdirectory under `--output-base` (default: `./data`).
+    [`scripts/hf/download.py`](scripts/hf/download.py) is a standalone script that downloads any combination of data from the four MR-RATE repositories. Each repo is written to its own subdirectory under `--output-base` (default: `./data`).
 
-| Flag | Default | Repository | Zip suffix | Output directory |
-|------|---------|-----------|------------|-----------------|
-| `--native` | on | `Forithmus/MR-RATE` | — | `./data/MR-RATE/` |
-| `--coreg` | off | `Forithmus/MR-RATE-coreg` | `_coreg` | `./data/MR-RATE-coreg/` |
-| `--atlas` | off | `Forithmus/MR-RATE-atlas` | `_atlas` | `./data/MR-RATE-atlas/` |
-| `--vista-seg` | off | `Forithmus/MR-RATE-vista-seg` | `_vista-seg` | `./data/MR-RATE-vista-seg/` |
+    | Flag | Default | Repository | Zip suffix | Output directory |
+    |------|---------|-----------|------------|-----------------|
+    | `--native` | on | `Forithmus/MR-RATE` | — | `./data/MR-RATE/` |
+    | `--coreg` | off | `Forithmus/MR-RATE-coreg` | `_coreg` | `./data/MR-RATE-coreg/` |
+    | `--atlas` | off | `Forithmus/MR-RATE-atlas` | `_atlas` | `./data/MR-RATE-atlas/` |
+    | `--vista-seg` | off | `Forithmus/MR-RATE-vista-seg` | `_vista-seg` | `./data/MR-RATE-vista-seg/` |
 
-Pass `--no-mri` to disable all MRI downloads (metadata/reports only). Metadata and reports are always fetched from `Forithmus/MR-RATE` into `./data/MR-RATE/`. Pass `--no-metadata` and/or `--no-reports` to disable metadata and/or reports downloads. Pass `--xet-high-perf` to enable Hugging Face's high-performance Xet transfer backend, which uses all available CPUs and maximum bandwidth. If you haven't deleted zip-files, downloads are resumable: `snapshot_download` skips zip files already present locally.
+    Pass `--no-mri` to disable all MRI downloads (metadata/reports only). Metadata and reports are always fetched from `Forithmus/MR-RATE` into `./data/MR-RATE/`. Pass `--no-metadata` and/or `--no-reports` to disable metadata and/or reports downloads. Pass `--xet-high-perf` to enable Hugging Face's high-performance Xet transfer backend, which uses all available CPUs and maximum bandwidth. If you haven't deleted zip-files, downloads are resumable: `snapshot_download` skips zip files already present locally. After every run, the script compares downloads with the remote repo files and prints a per-batch download status table.
 
-```bash
-# Some examples:
+    ```bash
+    # Some examples:
 
-# Download native MRI for all batches, unzip and free disk as you go
-python scripts/hf/download.py \
-    --batches all --unzip --delete-zips --no-metadata --no-reports --xet-high-perf
+    # Download native MRI plus metadata and reports for all batches, unzip and free disk as you go:
+    python scripts/hf/download.py \
+        --batches all --unzip --delete-zips --xet-high-perf
 
-# Download metadata plus co-registered and atlas registered MRI for specific batches, no native:
-python scripts/hf/download.py \
-    --batches 00,01 --no-native --coreg --atlas \
-    --no-reports --unzip --delete-zips
+    # Download metadata plus co-registered and atlas registered MRI for specific batches, no native, no reports:
+    python scripts/hf/download.py \
+        --batches 00,01 --no-native --coreg --atlas \
+        --no-reports --unzip --delete-zips
 
-# Download all modalities with a custom output base:
-python scripts/hf/download.py \
-    --native --coreg --atlas --vista-seg \
-    --no-metadata --no-reports --output-base /data
-```
+    # Download all MRI derivatives with a custom output base:
+    python scripts/hf/download.py \
+        --native --coreg --atlas --vista-seg \
+        --no-metadata --no-reports --output-base /data
 
-See `python scripts/hf/download.py --help` for the full list of options (workers, timeout, output base, etc.).
+    # To check download status for all batches without downloading anything:
+    python scripts/hf/download.py --batches all --no-mri --no-metadata --no-reports
+    ```
 
-Output structure after downloading all data for batch XX, unzipping and deleting zips:
+    See `python scripts/hf/download.py --help` for the full list of options (workers, timeout, output base, etc.).
 
-```plaintext
-./data/
-├── MR-RATE/
-│   ├── mri/
-│   │   └── batchXX/
-│   │       └── <study_uid>/
-│   │           ├── img/
-│   │           │   └── <study_uid>_<series_id>.nii.gz                              # Defaced native-space image (uint16 or float32)
-│   │           └── seg/
-│   │               ├── <study_uid>_<series_id>_brain-mask.nii.gz                   # Brain mask (uint8)
-│   │               └── <study_uid>_<series_id>_defacing-mask.nii.gz                # Defacing mask (uint8)
-│   ├── metadata/
-│   │   └── batchXX_metadata.csv
-│   └── reports/
-│       └── batchXX_reports.csv
-├── MR-RATE-coreg/
-│   └── mri/
-│       └── batchXX/
-│           └── <study_uid>/
-│               ├── coreg_img/
-│               │   ├── <study_uid>_<center_series_id>.nii.gz                        # Center modality (unchanged copy from native) (uint16 or float32)
-│               │   └── <study_uid>_coreg_<moving_series_id>.nii.gz                  # Moving modalities warped to center space (float32)
-│               ├── coreg_seg/
-│               │   ├── <study_uid>_<center_series_id>_brain-mask.nii.gz             # Center modality brain mask (unchanged copy from native) (uint8)
-│               │   └── <study_uid>_<center_series_id>_defacing-mask.nii.gz          # Center modality defacing mask (unchanged copy from native) (uint8)
-│               └── transform/
-│                   └── M_coreg_<moving_series_id>.mat                               # Moving→center ANTs transform (one per moving modality)
-├── MR-RATE-atlas/
-│   └── mri/
-│       └── batchXX/
-│           └── <study_uid>/
-│               ├── atlas_img/
-│               │   ├── <study_uid>_atlas_<center_series_id>.nii.gz                  # Center modality in atlas space (float32)
-│               │   └── <study_uid>_atlas_<moving_series_id>.nii.gz                  # Moving modalities in atlas space (float32)
-│               ├── atlas_seg/
-│               │   ├── <study_uid>_atlas_<center_series_id>_brain-mask.nii.gz       # Brain mask in atlas space (uint8)
-│               │   └── <study_uid>_atlas_<center_series_id>_defacing-mask.nii.gz    # Defacing mask in atlas space (uint8)
-│               └── transform/
-│                   └── M_atlas_<center_series_id>.mat                               # Center→atlas ANTs transform
-└── MR-RATE-vista-seg/
-    └── mri/
-        └── batchXX/
-            └── <study_uid>/
-                └── seg/
-                    └── <study_uid>_<center_series_id>_vista-seg.nii.gz              # Multi-label brain segmentation map
-```
+    Output structure after downloading all data for batch XX, unzipping and deleting zips:
+
+    ```plaintext
+    ./data/
+    ├── MR-RATE/
+    │   ├── mri/
+    │   │   └── batchXX/
+    │   │       └── <study_uid>/
+    │   │           ├── img/
+    │   │           │   └── <study_uid>_<series_id>.nii.gz                              # Defaced native-space image (uint16 or float32)
+    │   │           └── seg/
+    │   │               ├── <study_uid>_<series_id>_brain-mask.nii.gz                   # Brain mask (uint8)
+    │   │               └── <study_uid>_<series_id>_defacing-mask.nii.gz                # Defacing mask (uint8)
+    │   ├── metadata/
+    │   │   └── batchXX_metadata.csv
+    │   └── reports/
+    │       └── batchXX_reports.csv
+    ├── MR-RATE-coreg/
+    │   └── mri/
+    │       └── batchXX/
+    │           └── <study_uid>/
+    │               ├── coreg_img/
+    │               │   ├── <study_uid>_<center_series_id>.nii.gz                        # Center modality (unchanged copy from native) (uint16 or float32)
+    │               │   └── <study_uid>_coreg_<moving_series_id>.nii.gz                  # Moving modalities warped to center space (float32)
+    │               ├── coreg_seg/
+    │               │   ├── <study_uid>_<center_series_id>_brain-mask.nii.gz             # Center modality brain mask (unchanged copy from native) (uint8)
+    │               │   └── <study_uid>_<center_series_id>_defacing-mask.nii.gz          # Center modality defacing mask (unchanged copy from native) (uint8)
+    │               └── transform/
+    │                   └── M_coreg_<moving_series_id>.mat                               # Moving→center ANTs transform (one per moving modality)
+    ├── MR-RATE-atlas/
+    │   └── mri/
+    │       └── batchXX/
+    │           └── <study_uid>/
+    │               ├── atlas_img/
+    │               │   ├── <study_uid>_atlas_<center_series_id>.nii.gz                  # Center modality in atlas space (float32)
+    │               │   └── <study_uid>_atlas_<moving_series_id>.nii.gz                  # Moving modalities in atlas space (float32)
+    │               ├── atlas_seg/
+    │               │   ├── <study_uid>_atlas_<center_series_id>_brain-mask.nii.gz       # Brain mask in atlas space (uint8)
+    │               │   └── <study_uid>_atlas_<center_series_id>_defacing-mask.nii.gz    # Defacing mask in atlas space (uint8)
+    │               └── transform/
+    │                   └── M_atlas_<center_series_id>.mat                               # Center→atlas ANTs transform
+    └── MR-RATE-vista-seg/
+        └── mri/
+            └── batchXX/
+                └── <study_uid>/
+                    └── seg/
+                        └── <study_uid>_<center_series_id>_vista-seg.nii.gz              # Multi-label brain segmentation map
+    ```
+
+    Per-batch download status table example printed after downloads:
+    ```
+    Download Status
+    ════════════════════════════════════════════════════════════════════════════════════════════
+    Batch     │    native     │     coreg     │     atlas     │   vista-seg   │ metadata│ reports
+    ──────────┼───────────────┼───────────────┼───────────────┼───────────────┼─────────┼────────
+    batchXX   │ ✅  120/120   │ ☑️  120/120 * │ 🔄  45/120    │ ❌  0/120     │   ✅    │   ✅
+    ════════════════════════════════════════════════════════════════════════════════════════════
+    * mixed zip/folder: all studies are present but there are both zips and extracted folders in the same batch
+    ```
+    Legend: ✅ complete · ☑️ complete but mix of zips and extracted folders · 🔄 partial · ❌ missing · ⚠️ remote listing unavailable
 
 3. **(optional) Merge Downloaded Repos**
 
-After downloading and unzipping, [`scripts/hf/merge_downloaded_repos.py`](scripts/hf/merge_downloaded_repos.py) can consolidate derivative repo contents into `MR-RATE/` on a per-study basis. Each selected derivative repo must already exist under `--output-base`. At least one of `--coreg`, `--atlas`, or `--vista-seg` must be passed.
+    After downloading and unzipping, [`scripts/hf/merge_downloaded_repos.py`](scripts/hf/merge_downloaded_repos.py) can consolidate derivative repo contents into `MR-RATE/` on a per-study basis. Each selected derivative repo must already exist under `--output-base`. At least one of `--coreg`, `--atlas`, or `--vista-seg` must be passed.
 
-```bash
-# Merge coreg and atlas into native for all batches
-python scripts/hf/merge_downloaded_repos.py --coreg --atlas
+    ```bash
+    # Merge coreg and atlas into native for all batches
+    python scripts/hf/merge_downloaded_repos.py --coreg --atlas
 
-# Merge all derivatives for specific batches only
-python scripts/hf/merge_downloaded_repos.py --coreg --atlas --vista-seg --batches 00,01
+    # Merge all derivatives for specific batches only
+    python scripts/hf/merge_downloaded_repos.py --coreg --atlas --vista-seg --batches 00,01
 
-# Custom output base
-python scripts/hf/merge_downloaded_repos.py --coreg --atlas --output-base /data
-```
+    # Custom output base
+    python scripts/hf/merge_downloaded_repos.py --coreg --atlas --output-base /data
+    ```
 
-Output structure after merging all derivatives for batch XX:
+    Output structure after merging all derivatives for batch XX:
 
-```plaintext
-./data/
-└── MR-RATE/
-    └── mri/
-        └── batchXX/
-            └── <study_uid>/
-                ├── img/                                              # from MR-RATE/
-                ├── seg/                                              
-                │   ├── <study_uid>_<series_id>_brain-mask.nii.gz     # from MR-RATE/
-                │   ├── <study_uid>_<series_id>_defacing-mask.nii.gz  # from MR-RATE/
-                │   └── <study_uid>_<series_id>_vista-seg.nii.gz      # merged from MR-RATE-vista-seg/
-                ├── coreg_img/                                        # merged from MR-RATE-coreg/
-                ├── coreg_seg/                                        # merged from MR-RATE-coreg/
-                ├── atlas_img/                                        # merged from MR-RATE-atlas/
-                ├── atlas_seg/                                        # merged from MR-RATE-atlas/
-                └── transform/                                        # merged from MR-RATE-coreg/ and MR-RATE-atlas/
-```
+    ```plaintext
+    ./data/
+    └── MR-RATE/
+        └── mri/
+            └── batchXX/
+                └── <study_uid>/
+                    ├── img/                                              # from MR-RATE/
+                    ├── seg/                                              
+                    │   ├── <study_uid>_<series_id>_brain-mask.nii.gz     # from MR-RATE/
+                    │   ├── <study_uid>_<series_id>_defacing-mask.nii.gz  # from MR-RATE/
+                    │   └── <study_uid>_<series_id>_vista-seg.nii.gz      # merged from MR-RATE-vista-seg/
+                    ├── coreg_img/                                        # merged from MR-RATE-coreg/
+                    ├── coreg_seg/                                        # merged from MR-RATE-coreg/
+                    ├── atlas_img/                                        # merged from MR-RATE-atlas/
+                    ├── atlas_seg/                                        # merged from MR-RATE-atlas/
+                    └── transform/                                        # merged from MR-RATE-coreg/ and MR-RATE-atlas/
+    ```
 
-See `python scripts/hf/merge_downloaded_repos.py --help` for the full list of options.
+    See `python scripts/hf/merge_downloaded_repos.py --help` for the full list of options.
 
 4. **Quick reference for common operations:**
 
-```python
-import pandas as pd
+    ```python
+    import pandas as pd
 
-# Load metadata for a batch
-meta = pd.read_csv("data/MR-RATE/metadata/batch00_metadata.csv", dtype={"patient_uid": str}, low_memory=False)
+    # Load metadata for a batch
+    meta = pd.read_csv("data/MR-RATE/metadata/batch00_metadata.csv", dtype={"patient_uid": str}, low_memory=False)
 
-# Load reports
-reports = pd.read_csv("data/MR-RATE/reports/batch00_reports.csv", low_memory=False)
+    # Load reports
+    reports = pd.read_csv("data/MR-RATE/reports/batch00_reports.csv", low_memory=False)
 
-# Load patient-level assigned study splits
-splits = pd.read_csv("data/MR-RATE/splits.csv", usecols=["study_uid", "split"], low_memory=False)
+    # Load patient-level assigned study splits
+    splits = pd.read_csv("data/MR-RATE/splits.csv", usecols=["study_uid", "split"], low_memory=False)
 
-# Apply patient-level assigned study splits
-meta_with_split = meta.merge(splits, on="study_uid")
-train_meta = meta_with_split[meta_with_split["split"] == "train"]
+    # Apply patient-level assigned study splits
+    meta_with_split = meta.merge(splits, on="study_uid")
+    train_meta = meta_with_split[meta_with_split["split"] == "train"]
 
-# Find all series for a study in train split
-study_series = train_meta[train_meta["study_uid"] == "<study_uid>"]
+    # Find all series for a study in train split
+    study_series = train_meta[train_meta["study_uid"] == "<study_uid>"]
 
-# Find the report for a study
-study_report = reports[reports["study_uid"] == "<study_uid>"]
+    # Find the report for a study
+    study_report = reports[reports["study_uid"] == "<study_uid>"]
 
-# Find the center modality series for a study (used in coreg/atlas/segmentation)
-center = meta[(meta["study_uid"] == "<study_uid>") & (meta["is_center_modality"] == True)]
-```
+    # Find the center modality series for a study (used in coreg/atlas/segmentation)
+    center = meta[(meta["study_uid"] == "<study_uid>") & (meta["is_center_modality"] == True)]
+    ```

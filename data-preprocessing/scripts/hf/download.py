@@ -47,19 +47,25 @@ How it works
 ------------
 The script operates batch by batch. For each selected batch it:
   1. Downloads metadata and/or reports (single-file downloads, native repo only).
-  2. For each enabled MRI modality, downloads all zips for that batch via
+  2. For each enabled MRI derivative, downloads all zips for that batch via
      snapshot_download (concurrent, resumable across interrupted runs).
   3. Optionally unzips the downloaded studies in parallel and optionally removes
      the source zips to reclaim disk space.
+  4. Prints a download status table after every run, showing per-batch completion
+     across all repos.
 
 Note 1: If unzipping is interrupted, there is no mechanism to check if content
 of a study folder is complete.
 
 Note 2: snapshot_download ignores zip files that are already present in the local
 directory by default using output_dir/.cache but if you delete zips after extraction,
-huggingface_hub will download them again. One solution is to pass manually ignore_patterns
-but resolving the file tree takes more than downloading the zip files again. So we ignored
-this for now.
+huggingface_hub will download them again. One solution is to pass ignore_patterns for 
+existing study_uid folders but resolving the file tree on server side takes too long 
+due excessive number of files in the repos. So we ignored this for now.
+
+Note 3: Inside each locally downloaded repo directory, there are HF .cache folders 
+produced by snapshot_download, if your file system has number of files limit, you 
+might want to delete them.
 
 Dependencies
 ------------
@@ -80,7 +86,7 @@ Content selection:
   --coreg  / --no-coreg       Download co-registered MRI. (default: disabled)
   --atlas  / --no-atlas       Download atlas-space MRI. (default: disabled)
   --vista-seg / --no-vista-seg Download VISTA segmentations. (default: disabled)
-  --no-mri                    Disable all MRI modalities (overrides the above).
+  --no-mri                    Disable all MRI derivatives (overrides the above).
   --metadata / --no-metadata  Download metadata CSV files. (default: enabled)
   --reports  / --no-reports   Download report CSV. (default: enabled)
 
@@ -102,6 +108,13 @@ Output:
   --output-base DIR           Root directory; each repo gets its own subdirectory.
                               (default: ./data)
 
+Post-download status:
+  A download status table is always printed after every run. It queries the
+  remote repositories and compares with local files, showing for each batch 
+  and repository whether data is fully downloaded (✅), complete but mixed 
+  zip/folder state (☑️), partially downloaded (🔄), missing (❌), or whether 
+  the remote listing could not be fetched (⚠️).
+
 Usage examples
 --------------
     # Native MRI only for all batches, unzip and free disk as you go (use xet-high-perf for faster downloads)
@@ -110,12 +123,15 @@ Usage examples
     # Download coreg and atlas for batches 00 and 01, no native, no metadata/reports
     python download.py --batches 00,01 --no-native --coreg --atlas --no-metadata --no-reports
 
-    # All modalities, keep zips, custom output base
+    # All derivatives, keep zips, custom output base
     python download.py --native --coreg --atlas --vista-seg --no-metadata --no-reports \\
         --output-base /data
 
     # Metadata and reports only (no MRI)
     python download.py --no-mri
+
+    # Check download status without downloading anything
+    python download.py --no-mri --no-metadata --no-reports
 """
 
 import argparse
@@ -131,15 +147,15 @@ from typing import List, Tuple
 REPO_TYPE = "dataset"
 
 # (hf_repo_id, zip_suffix, output_subdir_name)
-MRI_MODALITIES = {
+MRI_DERIVATIVES = {
     "native":    ("Forithmus/MR-RATE",           "",           "MR-RATE"),
     "coreg":     ("Forithmus/MR-RATE-coreg",     "_coreg",     "MR-RATE-coreg"),
     "atlas":     ("Forithmus/MR-RATE-atlas",     "_atlas",     "MR-RATE-atlas"),
     "vista_seg": ("Forithmus/MR-RATE-vista-seg", "_vista-seg", "MR-RATE-vista-seg"),
 }
 
-NATIVE_REPO_ID = MRI_MODALITIES["native"][0]   # used for metadata / reports
-NATIVE_OUTPUT_SUBDIR = MRI_MODALITIES["native"][2]
+NATIVE_REPO_ID = MRI_DERIVATIVES["native"][0]   # used for metadata / reports
+NATIVE_OUTPUT_SUBDIR = MRI_DERIVATIVES["native"][2]
 
 # Batches are fixed: batch00 … batch27
 KNOWN_BATCHES: List[str] = [f"batch{str(i).zfill(2)}" for i in range(28)]
@@ -152,7 +168,7 @@ SNAPSHOT_DOWNLOAD_RETRY_DELAY = 5
 def _hf_imports():
     """Lazy import after env vars are set."""
     try:
-        from huggingface_hub import hf_hub_download, snapshot_download
+        from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
         from huggingface_hub.utils import EntryNotFoundError
     except ImportError:
         print(
@@ -160,7 +176,7 @@ def _hf_imports():
             "Install it with:  pip install huggingface_hub"
         )
         sys.exit(1)
-    return hf_hub_download, snapshot_download, EntryNotFoundError
+    return hf_hub_download, snapshot_download, EntryNotFoundError, list_repo_files
 
 
 def _require_tqdm():
@@ -376,6 +392,218 @@ def download_mri(
     )
 
 
+def print_download_status(list_repo_files, batches: List[str], output_base: Path) -> None:
+    """
+    Print a per-batch download status table covering all MRI derivatives plus
+    metadata and reports, comparing remote HuggingFace file listings against
+    what is present locally (as zips and/or extracted study folders).
+
+    Emoji legend
+    ------------
+    ✅  All studies present and consistently in one form (all zips or all folders).
+    ☑️  All studies present but mixed: some still zipped, some already extracted.
+    🔄  Partially downloaded (some studies missing).
+    ❌  Nothing found locally for this batch.
+    ⚠️  Could not retrieve the remote file list (network/auth error).
+    """
+    # Helper functions for visual width calculation
+    def _visual_width(s: str) -> int:
+        """
+        Return the terminal display width of s.
+
+        Wide emojis count as 2 columns. Variation Selector-16
+        (U+FE0F) forces the preceding character into emoji presentation (also 2 wide)
+        and itself contributes 1 extra column on top of the base character's 1.
+        Zero-width combining marks contribute 0.
+        """
+        import unicodedata
+        width = 0
+        for ch in s:
+            cp = ord(ch)
+            if cp == 0xFE0F:
+                # VS-16: upgrades preceding char from 1→2; add the extra column here
+                width += 1
+            elif unicodedata.category(ch) in ("Mn", "Cf"):
+                pass  # zero-width combining / format chars
+            elif unicodedata.east_asian_width(ch) in ("W", "F"):
+                width += 2
+            else:
+                width += 1
+        return width
+
+    def _ljust_vis(s: str, width: int) -> str:
+        """Left-justify s to the given visual (terminal) width."""
+        return s + " " * max(0, width - _visual_width(s))
+
+    def _center_vis(s: str, width: int) -> str:
+        """Centre s within the given visual (terminal) width."""
+        pad = max(0, width - _visual_width(s))
+        left = pad // 2
+        return " " * left + s + " " * (pad - left)
+
+    # Step 1 — Fetch remote file listings once per repo
+    print("\nFetching remote file listings for status check ...")
+
+    # repo_files: repo_id → frozenset of HF-relative path strings
+    repo_files: dict = {}
+    for _label, (repo_id, _suffix, _subdir) in MRI_DERIVATIVES.items():
+        if repo_id not in repo_files:
+            try:
+                repo_files[repo_id] = frozenset(
+                    list_repo_files(repo_id, repo_type=REPO_TYPE)
+                )
+            except Exception as exc:
+                print(f"  WARNING: could not list {repo_id}: {exc}")
+                repo_files[repo_id] = None  # sentinel → show "⚠️" in table
+
+    # Native repo also carries metadata and reports
+    native_files = repo_files.get(NATIVE_REPO_ID)
+
+    # Step 2 — Build the table rows
+    # Columns: batch | native | coreg | atlas | vista_seg | metadata | reports
+    DERIV_ORDER = list(MRI_DERIVATIVES.keys())  # preserves insertion order
+
+    # We want to track whether any batch has a mixed-zip footnote
+    mixed_footnote_needed = False
+
+    rows = []
+    for batch_id in batches:
+        row: dict = {"batch": batch_id}
+
+        # -- MRI derivatives --
+        for label, (repo_id, zip_suffix, out_subdir) in MRI_DERIVATIVES.items():
+            hf_set = repo_files.get(repo_id)
+            if hf_set is None:
+                row[label] = ("⚠️", "")
+                continue
+
+            # Files in this batch on HF
+            prefix = f"mri/{batch_id}/"
+            hf_zips = [
+                f for f in hf_set
+                if f.startswith(prefix) and f.endswith(".zip")
+            ]
+            total = len(hf_zips)
+            if total == 0:
+                row[label] = ("⚠️", "")
+                continue
+
+            batch_local_dir = output_base / out_subdir / "mri" / batch_id
+            n_zip = 0
+            n_folder = 0
+            n_downloaded = 0
+            for hf_path in hf_zips:
+                zip_name = Path(hf_path).name          # e.g. "uid_coreg.zip"
+                zip_stem = Path(hf_path).stem           # e.g. "uid_coreg"
+                # Strip derivative suffix to get the study uid
+                if zip_suffix and zip_stem.endswith(zip_suffix):
+                    study_uid = zip_stem[: -len(zip_suffix)]
+                else:
+                    study_uid = zip_stem
+
+                local_zip = batch_local_dir / zip_name
+                local_folder = batch_local_dir / study_uid
+
+                has_zip = local_zip.exists()
+                has_folder = local_folder.is_dir()
+                has_downloaded = has_zip or has_folder
+
+                if has_zip:
+                    n_zip += 1
+                if has_folder:
+                    n_folder += 1
+                if has_downloaded:
+                    n_downloaded += 1
+
+            fraction = f"{n_downloaded}/{total}"
+
+            if n_downloaded == 0:
+                icon = "❌"
+                note = ""
+            elif n_downloaded < total:
+                icon = "🔄"
+                note = ""
+            else:
+                # All present — check for mixed state
+                if n_zip > 0 and n_folder > 0:
+                    icon = "☑️"
+                    note = "*"
+                    mixed_footnote_needed = True
+                else:
+                    icon = "✅"
+                    note = ""
+
+            row[label] = (icon, fraction + note)
+
+        # -- Metadata --
+        meta_hf_path = f"metadata/{batch_id}_metadata.csv"
+        meta_local = output_base / NATIVE_OUTPUT_SUBDIR / meta_hf_path
+        if native_files is None:
+            row["metadata"] = "⚠️"
+        elif meta_hf_path not in native_files:
+            row["metadata"] = "N/A"
+        else:
+            row["metadata"] = "✅" if meta_local.exists() else "❌"
+
+        # -- Reports --
+        rep_hf_path = f"reports/{batch_id}_reports.csv"
+        rep_local = output_base / NATIVE_OUTPUT_SUBDIR / rep_hf_path
+        if native_files is None:
+            row["reports"] = "⚠️"
+        elif rep_hf_path not in native_files:
+            row["reports"] = "N/A"
+        else:
+            row["reports"] = "✅" if rep_local.exists() else "❌"
+
+        rows.append(row)
+
+    # Step 3 — Render the table
+    # MRI cell content: "<icon>  <fraction>" — fixed width for alignment
+    MRI_CELL_W = 14  # enough for "✔   120/120*"
+    META_CELL_W = 8
+
+    deriv_labels = {
+        "native":    "native",
+        "coreg":     "coreg",
+        "atlas":     "atlas",
+        "vista_seg": "vista-seg",
+    }
+
+    header_parts = [f"{'Batch':<10}"]
+    for label in DERIV_ORDER:
+        header_parts.append(f" {deriv_labels[label]:^{MRI_CELL_W}}")
+    header_parts.append(f" {'metadata':^{META_CELL_W}}")
+    header_parts.append(f" {'reports':^{META_CELL_W}}")
+
+    col_sep = "│"
+    header = col_sep.join(header_parts)
+    divider = "─" * 10 + "┼" + ("─" * (MRI_CELL_W + 1) + "┼") * len(DERIV_ORDER) + \
+              ("─" * (META_CELL_W + 1) + "┼") + "─" * (META_CELL_W + 1)
+
+    print()
+    print("Download Status")
+    print("=" * len(header))
+    print(header)
+    print(divider)
+
+    for row in rows:
+        parts = [f"{row['batch']:<10}"]
+        for label in DERIV_ORDER:
+            icon, fraction = row[label]
+            cell = f"{icon}  {fraction}" if fraction else icon
+            parts.append(" " + _ljust_vis(cell, MRI_CELL_W))
+        parts.append(" " + _center_vis(row["metadata"], META_CELL_W))
+        parts.append(" " + _center_vis(row["reports"], META_CELL_W))
+        print(col_sep.join(parts))
+
+    print("=" * len(header))
+
+    if mixed_footnote_needed:
+        print("  * mixed zip/folder: all studies are present but there are both zips and extracted folders in the same batch")
+
+    print()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="download.py",
@@ -392,7 +620,7 @@ examples:
   # Co-registered + atlas MRI for batches 00 and 01, no native
   python download.py --batches 00,01 --no-native --coreg --atlas --no-metadata --no-reports
 
-  # All modalities, keep zips, custom output base
+  # All derivatives, keep zips, custom output base
   python download.py --native --coreg --atlas --vista-seg --no-metadata --no-reports \\
       --output-base /data
 
@@ -402,6 +630,9 @@ examples:
   # Use xet high-performance backend for faster downloads
   python download.py --native --coreg --unzip --delete-zips --no-metadata --no-reports \\
       --xet-high-perf --unzip-workers 8
+
+  # Check download status without downloading anything
+  python download.py --no-mri --no-metadata --no-reports
 """,
     )
 
@@ -415,8 +646,8 @@ examples:
         ),
     )
 
-    # MRI modality flags
-    mri_group = parser.add_argument_group("MRI modalities")
+    # MRI derivative flags
+    mri_group = parser.add_argument_group("MRI derivatives")
     mri_group.add_argument(
         "--native",
         default=True,
@@ -447,7 +678,7 @@ examples:
         action="store_true",
         default=False,
         dest="no_mri",
-        help="Disable all MRI modalities (overrides --native/--coreg/--atlas/--vista-seg).",
+        help="Disable all MRI derivatives (overrides --native/--coreg/--atlas/--vista-seg).",
     )
 
     # Other content flags
@@ -535,7 +766,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    # --no-mri overrides all individual modality flags
+    # --no-mri overrides all individual derivative flags
     if args.no_mri:
         args.native = args.coreg = args.atlas = args.vista_seg = False
 
@@ -559,13 +790,13 @@ def main() -> int:
         )
         os.environ["HF_XET_HIGH_PERFORMANCE"] = "1"
 
-    hf_hub_download, snapshot_download, EntryNotFoundError = _hf_imports()
+    hf_hub_download, snapshot_download, EntryNotFoundError, list_repo_files = _hf_imports()
     tqdm = _require_tqdm()
 
-    # Build list of active MRI modalities with their per-modality output dirs
+    # Build list of active MRI derivatives with their per-derivative output dirs
     active_mri = [
         (label, repo_id, zip_suffix, output_base / out_subdir)
-        for label, (repo_id, zip_suffix, out_subdir) in MRI_MODALITIES.items()
+        for label, (repo_id, zip_suffix, out_subdir) in MRI_DERIVATIVES.items()
         if getattr(args, label)
     ]
 
@@ -626,6 +857,8 @@ def main() -> int:
             )
 
         print()
+
+    print_download_status(list_repo_files, selected_batches, output_base)
 
     print("=" * 60)
     print("Done.")
