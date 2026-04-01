@@ -55,29 +55,32 @@ def l2norm(t):
     return F.normalize(t, p=2, dim=-1)
 
 
-# ==============================================================================
-# DEFAULT BRAIN MRI PATHOLOGIES
-# ==============================================================================
-DEFAULT_PATHOLOGIES = [
-    "White matter hyperintensity",
-    "Acute infarction",
-    "Chronic infarction",
-    "Mass lesion",
-    "Hemorrhage",
-    "Microhemorrhage",
-    "Cerebral atrophy",
-    "Ventricular enlargement",
-    "Midline shift",
-    "Extra-axial fluid collection",
-    "Enhancement",
-    "Restricted diffusion",
-    "Hydrocephalus",
-    "Periventricular white matter changes",
-    "Cerebellar abnormality",
-    "Brainstem abnormality",
-    "Sinus disease",
-    "Vascular abnormality",
-]
+def load_pathologies(pathologies_file):
+    """Load pathologies from JSON file.
+
+    Supports two formats:
+      1. {"pathologies": {"Name": {"positive": "...", "negative": "..."}, ...}}
+      2. ["Name1", "Name2", ...] (legacy, uses generic prompts)
+
+    Returns list of (label, positive_prompt, negative_prompt) tuples.
+    """
+    with open(pathologies_file, 'r') as f:
+        raw = json.load(f)
+    if isinstance(raw, dict) and "pathologies" in raw:
+        return [
+            (name, info["positive"], info["negative"])
+            for name, info in raw["pathologies"].items()
+        ]
+    elif isinstance(raw, list):
+        return [
+            (p, f"There is {p.lower()}", f"There is no {p.lower()}")
+            for p in raw
+        ]
+    else:
+        raise ValueError(
+            f"Unsupported pathologies file format. Expected dict with 'pathologies' "
+            f"key or a list of strings, got: {type(raw)}"
+        )
 
 
 class MrRateInference(nn.Module):
@@ -102,7 +105,7 @@ class MrRateInference(nn.Module):
         labels_file=None,
         splits_csv=None,
         split="test",
-        pathologies=None,
+        pathologies,
         accelerate_kwargs: dict = dict(),
     ):
         super().__init__()
@@ -116,7 +119,10 @@ class MrRateInference(nn.Module):
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents=True, exist_ok=True)
         self.result_folder_txt = str(self.results_folder) + "/"
-        self.pathologies = pathologies or DEFAULT_PATHOLOGIES
+
+        # Pathologies: list of (label, positive_prompt, negative_prompt)
+        self.pathology_prompts = pathologies
+        self.pathologies = [p[0] for p in self.pathology_prompts]
 
         self.register_buffer('steps', torch.Tensor([0]))
 
@@ -241,9 +247,9 @@ class MrRateInference(nn.Module):
         # 1. Pre-compute text embeddings: [Pos1, Neg1, Pos2, Neg2, ...]
         print(f"Pre-computing text embeddings for {len(pathologies)} pathologies...")
         prompts = []
-        for p in pathologies:
-            prompts.append(f"There is {p.lower()}.")
-            prompts.append(f"There is no {p.lower()}.")
+        for label, pos_prompt, neg_prompt in self.pathology_prompts:
+            prompts.append(pos_prompt)
+            prompts.append(neg_prompt)
 
         with torch.no_grad():
             with autocast(dtype=torch.bfloat16):
@@ -392,29 +398,26 @@ if __name__ == "__main__":
                         help='Path to MR data folder containing subject directories')
     parser.add_argument('--jsonl_file', type=str, required=True,
                         help='Path to reports JSONL file')
-    parser.add_argument('--labels_file', type=str, default=None,
-                        help='Path to labels CSV (optional, for evaluation)')
+    parser.add_argument('--labels_file', type=str, required=True,
+                        help='Path to labels CSV (study_uid + binary pathology columns)')
 
     # Splits and normalization
     parser.add_argument('--splits_csv', type=str, default=None,
-                        help='Path to splits CSV with columns: batch_id, patient_uid, study_uid, split')
+                        help='Path to splits CSV with columns: study_uid, split')
     parser.add_argument('--split', type=str, default='test',
                         choices=['train', 'val', 'test'])
     parser.add_argument('--normalizer', type=str, default='zscore',
                         choices=['zscore', 'percentile', 'minmax'])
 
-    # Custom pathologies (JSON file with list of strings)
-    parser.add_argument('--pathologies_file', type=str, default=None,
-                        help='JSON file with custom list of pathology names')
+    # Pathologies definition
+    parser.add_argument('--pathologies_file', type=str, required=True,
+                        help='JSON file with pathology definitions and positive/negative prompts')
 
     args = parser.parse_args()
 
-    # Load custom pathologies if provided
-    pathologies = None
-    if args.pathologies_file:
-        with open(args.pathologies_file, 'r') as f:
-            pathologies = json.load(f)
-        print(f"Loaded {len(pathologies)} custom pathologies from {args.pathologies_file}")
+    # Load pathologies
+    pathologies = load_pathologies(args.pathologies_file)
+    print(f"Loaded {len(pathologies)} pathologies from {args.pathologies_file}")
 
     print(f"\n{'='*60}")
     print(f"MR-RATE Brain MRI Inference")

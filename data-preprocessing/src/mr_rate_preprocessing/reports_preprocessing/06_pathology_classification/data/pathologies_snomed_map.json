@@ -1,0 +1,261 @@
+{
+  "Cerebral infarction": {
+    "snomedId": "432504007",
+    "snomedLabel": "Cerebral infarction",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Ischemic infarct"
+  },
+  "Cerebral hemorrhage": {
+    "snomedId": "274100004",
+    "snomedLabel": "Cerebral hemorrhage",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Intracerebral hemorrhage"
+  },
+  "Metastatic malignant neoplasm to brain": {
+    "snomedId": "94225005",
+    "snomedLabel": "Metastatic malignant neoplasm to brain",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Brain metastasis"
+  },
+  "Intracranial meningioma": {
+    "snomedId": "302820008",
+    "snomedLabel": "Intracranial meningioma",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Meningioma"
+  },
+  "Demyelinating disease of central nervous system": {
+    "snomedId": "6118003",
+    "snomedLabel": "Demyelinating disease of central nervous system",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Demyelinating disease"
+  },
+  "Herniation of nucleus pulposus": {
+    "snomedId": "84857004",
+    "snomedLabel": "Herniation of nucleus pulposus",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Disc herniation"
+  },
+  "Spinal cord compression": {
+    "snomedId": "71286001",
+    "snomedLabel": "Spinal cord compression",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Spinal cord compression"
+  },
+  "Lacunar infarct": {
+    "snomedId": "81037000",
+    "snomedLabel": "Lacunar infarct",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Lacunar infarct"
+  },
+  "Silent micro-hemorrhage of brain": {
+    "snomedId": "723857007",
+    "snomedLabel": "Silent micro-hemorrhage of brain",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Cerebral microbleeds"
+  },
+  "Cavernous hemangioma": {
+    "snomedId": "416824008",
+    "snomedLabel": "Cavernous hemangioma",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Cavernous malformation"
+  },
+  "Subdural intracranial hemorrhage": {
+    "snomedId": "35486000",
+    "snomedLabel": "Subdural intracranial hemorrhage",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Extra-axial hematoma"
+  },
+  "Gliosis": {
+    "snomedId": "81415000",
+    "snomedLabel": "Gliosis",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "White matter gliosis"
+  },
+  "Cerebral atrophy": {
+    "snomedId": "278849000",
+    "snomedLabel": "Cerebral atrophy",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Cerebral atrophy"
+  },
+  "Encephalomalacia": {
+    "snomedId": "58762006",
+    "snomedLabel": "Encephalomalacia",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Encephalomalacia"
+  },
+  "Arachnoid cyst": {
+    "snomedId": "33595009",
+    "snomedLabel": "Arachnoid cyst",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Arachnoid cyst"
+  },
+  "Empty sella syndrome": {
+    "snomedId": "237722004",
+    "snomedLabel": "Empty sella syndrome",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Empty sella"
+  },
+  "Intracranial aneurysm": {
+    "snomedId": "128609009",
+    "snomedLabel": "Intracranial aneurysm",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Intracranial aneurysm"
+  },
+  "Chiari malformation": {
+    "snomedId": "253184003",
+    "snomedLabel": "Chiari malformation",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Chiari malformation"
+  },
+  "Schwannoma": {
+    "snomedId": "985004",
+    "snomedLabel": "Schwannoma",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Schwannoma"
+  },
+  "Cyst of pineal gland": {
+    "snomedId": "413099000",
+    "snomedLabel": "Cyst of pineal gland",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Pineal cyst"
+  },
+  "Hemangioma of vertebral column": {
+    "snomedId": "448232005",
+    "snomedLabel": "Hemangioma of vertebral column",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Vertebral hemangioma"
+  },
+  "Rathke's pouch cyst": {
+    "snomedId": "52859009",
+    "snomedLabel": "Rathke's pouch cyst",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Rathke cleft cyst"
+  },
+  "Cerebral edema": {
+    "snomedId": "2032001",
+    "snomedLabel": "Cerebral edema",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Cerebral edema"
+  },
+  "Spinal stenosis": {
+    "snomedId": "76107001",
+    "snomedLabel": "Spinal stenosis",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Spinal canal stenosis"
+  },
+  "Mastoiditis": {
+    "snomedId": "52404001",
+    "snomedLabel": "Mastoiditis",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Mastoiditis"
+  },
+  "Chronic mastoiditis": {
+    "snomedId": "80645004",
+    "snomedLabel": "Chronic mastoiditis",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Chronic mastoiditis"
+  },
+  "Ventriculomegaly": {
+    "snomedId": "413808003",
+    "snomedLabel": "Ventriculomegaly",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Ventriculomegaly"
+  },
+  "Cerebellar degeneration": {
+    "snomedId": "95646004",
+    "snomedLabel": "Cerebellar degeneration",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Cerebellar atrophy"
+  },
+  "Mega cisterna magna": {
+    "snomedId": "447739003",
+    "snomedLabel": "Mega cisterna magna",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Mega cisterna magna"
+  },
+  "Structure of cave of septum pellucidum": {
+    "snomedId": "74968005",
+    "snomedLabel": "Structure of cave of septum pellucidum",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Cavum septum pellucidum"
+  },
+  "Hyperostosis of skull": {
+    "snomedId": "788954009",
+    "snomedLabel": "Hyperostosis of skull",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Calvarial thickening"
+  },
+  "Watershed infarct": {
+    "snomedId": "47559000",
+    "snomedLabel": "Watershed infarct",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Watershed infarct"
+  },
+  "Choroid plexus cyst": {
+    "snomedId": "230790004",
+    "snomedLabel": "Choroid plexus cyst",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Choroid plexus cyst"
+  },
+  "Foraminal Spinal Stenosis": {
+    "radlexId": "http://www.radlex.org/RID/#RID5034",
+    "radlexLabel": "foraminal spinal stenosis",
+    "mapped": true,
+    "source": "radlex",
+    "originalName": "Foraminal stenosis"
+  },
+  "Lipoma of brain": {
+    "snomedId": "15863451000119107",
+    "snomedLabel": "Lipoma of brain",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Intracranial lipoma"
+  },
+  "Glioma": {
+    "snomedId": "393564001",
+    "snomedLabel": "Glioma",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Glioma"
+  },
+  "Pituitary adenoma": {
+    "snomedId": "254956000",
+    "snomedLabel": "Pituitary adenoma",
+    "mapped": true,
+    "source": "snomed",
+    "originalName": "Pituitary adenoma"
+  }
+}

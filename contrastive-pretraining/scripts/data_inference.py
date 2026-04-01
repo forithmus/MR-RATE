@@ -77,7 +77,7 @@ class MRReportDatasetInfer(Dataset):
         self.samples = self._prepare_samples(data_folder)
 
         print(f"[MRReportDatasetInfer] Found {len(self.samples)} subjects "
-              f"(space={space}, normalizer={normalizer})")
+              f"(normalizer={normalizer})")
         if self.label_columns:
             print(f"[MRReportDatasetInfer] Labels loaded: {len(self.label_columns)} classes")
 

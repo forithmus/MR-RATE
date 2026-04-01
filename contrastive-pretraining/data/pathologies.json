@@ -1,0 +1,152 @@
+{
+  "pathologies": {
+    "Cerebral infarction": {
+      "positive": "There is infarct",
+      "negative": "There is no infarct"
+    },
+    "Cerebral hemorrhage": {
+      "positive": "There is cerebral hemorrhage",
+      "negative": "There is no cerebral hemorrhage"
+    },
+    "Metastatic malignant neoplasm to brain": {
+      "positive": "There is metastasis",
+      "negative": "There is no metastasis"
+    },
+    "Intracranial meningioma": {
+      "positive": "There is meningioma",
+      "negative": "There is no meningioma"
+    },
+    "Demyelinating disease of central nervous system": {
+      "positive": "There is demyelinating plaques",
+      "negative": "There is no demyelinating plaques"
+    },
+    "Herniation of nucleus pulposus": {
+      "positive": "There is disc herniation",
+      "negative": "There is no disc herniation"
+    },
+    "Spinal cord compression": {
+      "positive": "There is spinal cord compression",
+      "negative": "There is no spinal cord compression"
+    },
+    "Lacunar infarct": {
+      "positive": "There is lacunar infarct",
+      "negative": "There is no lacunar infarct"
+    },
+    "Silent micro-hemorrhage of brain": {
+      "positive": "There is microhemorrhage",
+      "negative": "There is no microhemorrhage"
+    },
+    "Cavernous hemangioma": {
+      "positive": "There is cavernoma",
+      "negative": "There is no cavernoma"
+    },
+    "Subdural intracranial hemorrhage": {
+      "positive": "There is subdural hematoma",
+      "negative": "There is no subdural hematoma"
+    },
+    "Gliosis": {
+      "positive": "There is gliosis",
+      "negative": "There is no gliosis"
+    },
+    "Cerebral atrophy": {
+      "positive": "There is cerebral atrophy",
+      "negative": "There is no cerebral atrophy"
+    },
+    "Encephalomalacia": {
+      "positive": "There is encephalomalacia",
+      "negative": "There is no encephalomalacia"
+    },
+    "Arachnoid cyst": {
+      "positive": "There is arachnoid cyst",
+      "negative": "There is no arachnoid cyst"
+    },
+    "Empty sella syndrome": {
+      "positive": "There is empty sella",
+      "negative": "There is no empty sella"
+    },
+    "Intracranial aneurysm": {
+      "positive": "There is intracranial aneurysm",
+      "negative": "There is no intracranial aneurysm"
+    },
+    "Chiari malformation": {
+      "positive": "There is Chiari malformation",
+      "negative": "There is no Chiari malformation"
+    },
+    "Schwannoma": {
+      "positive": "There is schwannoma",
+      "negative": "There is no schwannoma"
+    },
+    "Cyst of pineal gland": {
+      "positive": "There is pineal cyst",
+      "negative": "There is no pineal cyst"
+    },
+    "Hemangioma of vertebral column": {
+      "positive": "There is vertebral hemangioma",
+      "negative": "There is no vertebral hemangioma"
+    },
+    "Rathke's pouch cyst": {
+      "positive": "There is Rathke cleft cyst",
+      "negative": "There is no Rathke cleft cyst"
+    },
+    "Cerebral edema": {
+      "positive": "There is edema",
+      "negative": "There is no edema"
+    },
+    "Spinal stenosis": {
+      "positive": "There is spinal canal stenosis",
+      "negative": "There is no spinal canal stenosis"
+    },
+    "Mastoiditis": {
+      "positive": "There is mastoiditis",
+      "negative": "There is no mastoiditis"
+    },
+    "Chronic mastoiditis": {
+      "positive": "There is chronic mastoiditis",
+      "negative": "There is no chronic mastoiditis"
+    },
+    "Ventriculomegaly": {
+      "positive": "There is ventriculomegaly",
+      "negative": "There is no ventriculomegaly"
+    },
+    "Cerebellar degeneration": {
+      "positive": "There is cerebellar atrophy",
+      "negative": "There is no cerebellar atrophy"
+    },
+    "Mega cisterna magna": {
+      "positive": "There is mega cisterna magna",
+      "negative": "There is no mega cisterna magna"
+    },
+    "Structure of cave of septum pellucidum": {
+      "positive": "There is cavum septum pellucidum",
+      "negative": "There is no cavum septum pellucidum"
+    },
+    "Hyperostosis of skull": {
+      "positive": "There is hyperostosis",
+      "negative": "There is no hyperostosis"
+    },
+    "Watershed infarct": {
+      "positive": "There is watershed infarct",
+      "negative": "There is no watershed infarct"
+    },
+    "Choroid plexus cyst": {
+      "positive": "There is choroid plexus cyst",
+      "negative": "There is no choroid plexus cyst"
+    },
+    "Foraminal Spinal Stenosis": {
+      "positive": "There is foraminal stenosis",
+      "negative": "There is no foraminal stenosis"
+    },
+    "Lipoma of brain": {
+      "positive": "There is lipoma",
+      "negative": "There is no lipoma"
+    },
+    "Glioma": {
+      "positive": "There is glioma",
+      "negative": "There is no glioma"
+    },
+    "Pituitary adenoma": {
+      "positive": "There is pituitary adenoma",
+      "negative": "There is no pituitary adenoma"
+    }
+  }
+}

@@ -86,6 +86,32 @@ Each step follows an iterative **run → QC → retry → re-QC** loop until qua
 │  Per-batch CSVs: batch{NN}_reports.csv                          │
 │  Columns: Studiy_UID, report, clinical_information, technique,  │
 │           findings, impression                                  │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  06_PATHOLOGY_CLASSIFICATION                                    │
+│  ├─ classify_pathologies_parallel.py                            │
+│  │   3-step LLM classification per report:                      │
+│  │     Step 1: CoT reasoning with exact quotes                  │
+│  │     Step 2: JSON extraction with cross-validation            │
+│  │     Step 3: Verification of PRESENT labels                   │
+│  │   37 SNOMED CT-grounded pathologies, 0/1 binary labels       │
+│  │                                                              │
+│  ├─ merge_labels.py                                             │
+│  │   Merge per-rank JSONs into single CSV                       │
+│  │                                                              │
+│  └─ data/                                                       │
+│      ├─ pathologies.json          (pathology definitions)        │
+│      └─ pathologies_snomed_map.json (SNOMED CT mappings)        │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   PATHOLOGY LABELS CSV                           │
+│  labels.csv                                                     │
+│  Columns: study_uid, Cerebral infarction, Cerebral hemorrhage,  │
+│           ... (37 pathology columns, values 0 or 1)             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -174,6 +200,64 @@ Genuine failures (missing content, hallucinated content, wrong vascular territor
 - Formatting differences (bullets, whitespace)
 - Section title additions (Cranial:, Cervical:)
 - Comparison info placement (technique vs findings)
+
+### 06_pathology_classification
+
+**Script**: `classify_pathologies_parallel.py`
+
+Multi-step LLM-based binary classification of structured reports against 37 brain/spine MRI pathologies, each grounded to SNOMED CT or RadLex.
+
+**Three-step pipeline per report:**
+
+1. **Step 1 — CoT reasoning**: The model reads the `findings` section and reasons through each of the 37 pathologies, quoting exact sentences from the report. Strict inference rules prevent cross-pathology contamination (e.g., "ischemic-gliotic lesions" → Gliosis=PRESENT but Cerebral infarction=ABSENT).
+
+2. **Step 2 — JSON extraction**: The model converts its CoT analysis into a structured JSON with 0/1 values. Cross-validated against CoT labels — CoT is authoritative on disagreement. Failed JSON parses are retried up to 2 times, with CoT-only fallback.
+
+3. **Step 3 — Verification**: For reports with any PRESENT labels, the model re-examines each one against explicit KEEP/ABSENT rules to catch false positives from invalid inference. Only 1→0 flips are allowed (removing false positives; no new PRESENT labels introduced).
+
+**Pathologies**: 37 brain/spine MRI pathologies defined in `data/pathologies.json`. Each has positive/negative sentence pairs for contrastive pretraining. SNOMED CT/RadLex mappings in `data/pathologies_snomed_map.json`.
+
+| # | Pathology | SNOMED CT ID | Prevalence |
+|---|-----------|-------------|------------|
+| 1 | Gliosis | — | 35.5% |
+| 2 | Cerebral atrophy | 278849000 | 14.5% |
+| 3 | Ventriculomegaly | 413808003 | 11.2% |
+| 4 | Cerebral edema | 2032001 | 4.8% |
+| 5 | Cerebral infarction | 432504007 | 3.8% |
+| 6 | Empty sella syndrome | 237722004 | 3.8% |
+| 7 | Arachnoid cyst | 33595009 | 3.6% |
+| 8 | Metastatic malignant neoplasm to brain | 94225005 | 3.4% |
+| 9 | Demyelinating disease of CNS | 6118003 | 3.0% |
+| 10 | Mastoiditis | 52404001 | 2.9% |
+| 11–37 | *(see `data/pathologies.json` for full list)* | | |
+
+**Model**: Qwen3.5-35B-A3B via vLLM, temperature=0, seed=42
+
+**Input**: Structured report CSVs from step 05 (`batch{NN}_reports.csv` with `study_uid` and `findings` columns)
+
+**Output**: Per-rank `labels_rank_{RANK}.json` containing metadata, stats, and per-report results (labels + CoT reasoning)
+
+**Merge**: `merge_labels.py` combines per-rank JSONs into a single `labels.csv` with `study_uid` + 37 pathology columns (0/1)
+
+**Validation**: Manual review of 100 random samples showed 0% clear errors and ~4% borderline cases (findings-only evaluation).
+
+**Run:**
+
+```bash
+# Classification (distributed across 8 nodes x 4 GPUs = 32 ranks)
+srun python 06_pathology_classification/classify_pathologies_parallel.py \
+    --reports_dir /path/to/reports \
+    --pathologies_json 06_pathology_classification/data/pathologies.json \
+    --output_dir /path/to/output \
+    --model_name Qwen/Qwen3.5-35B-A3B \
+    --batch_size 500 \
+    --seed 42
+
+# Merge per-rank results into single CSV
+python 06_pathology_classification/merge_labels.py \
+    --input_dir /path/to/output \
+    --output /path/to/labels.csv
+```
 
 ## QC
 

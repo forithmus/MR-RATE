@@ -49,12 +49,13 @@ data-preprocessing/
 │       ├── registration/
 │       │   ├── registration.py            # ANTs co-registration and atlas registration
 │       │   └── upload.py                  # Zip registration outputs and upload to HF
-│       └── reports_preprocessing/             # Report anonymization, translation, structuring, QC
+│       └── reports_preprocessing/             # Report anonymization, translation, structuring, QC, classification
 │           ├── 01_anonymization/
 │           ├── 02_translation/
 │           ├── 03_translation_qc/
 │           ├── 04_structuring/
 │           ├── 05_structure_qc/
+│           ├── 06_pathology_classification/
 │           └── utils/
 ├── tests/                                 # Coming soon
 └── figures/                               # Figures for submodule
@@ -101,6 +102,8 @@ Raw Turkish radiology reports are converted to structured English through an ite
 
 5. **[Structure QC](src/mr_rate_preprocessing/reports_preprocessing/05_structure_qc/)** — LLM-based verification comparing structured output against the raw report, checking for missing content, hallucinations, and misplaced sections.
 
+6. **[Pathology Classification](src/mr_rate_preprocessing/reports_preprocessing/06_pathology_classification/)** — Three-step LLM-based binary classification of the `findings` section against 37 SNOMED CT-grounded brain/spine MRI pathologies. Step 1 produces chain-of-thought reasoning with exact quotes, step 2 extracts structured JSON labels, and step 3 verifies PRESENT labels to remove false positives from invalid inference. Outputs a CSV with `study_uid` and 37 binary (0/1) pathology columns.
+
 ---
 
 ### Registration
@@ -142,8 +145,14 @@ After MRI & Metadata Preprocessing is run, processed and uploaded studies are do
 2. **Create and activate conda environment, install the package in editable mode:**
 
    ```bash
+   # For MRI preprocessing (DICOM conversion, segmentation, registration):
    conda env create -f environment.yml
    conda activate mr-rate-preprocessing
+   pip install -e .
+
+   # For report preprocessing (anonymization, translation, structuring, classification):
+   conda env create -f environment_reports.yml
+   conda activate mr-rate-reports
    pip install -e .
    ```
 
@@ -228,8 +237,13 @@ All MRI pipeline steps are driven by a single YAML config file. Batch configs ar
    ├── mri/
    │   └── batchXX/
    │       └── <study_uid>.zip          # Uploaded by step 6
-   └── metadata/
-       └── batchXX_metadata.csv         # Uploaded by step 7
+   ├── metadata/
+   │   └── batchXX_metadata.csv         # Uploaded by step 7
+   ├── reports/
+   │   └── batchXX_reports.csv          # Structured English reports
+   ├── pathology_labels/
+   │   └── mrrate_labels.csv            # Binary pathology labels (37 pathologies, 0/1)
+   └── splits.csv                       # Patient-level train/val/test splits
    ```
 
 Intermediate outputs are written to the paths defined in your config file, following the `data/interim/` → `data/processed/` convention.
@@ -460,8 +474,10 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
     │   │               └── <study_uid>_<series_id>_defacing-mask.nii.gz                # Defacing mask (uint8)
     │   ├── metadata/
     │   │   └── batchXX_metadata.csv
-    │   └── reports/
-    │       └── batchXX_reports.csv
+    │   ├── reports/
+    │   │   └── batchXX_reports.csv
+    │   └── pathology_labels/
+    │       └── mrrate_labels.csv                                                   # Binary pathology labels (37 columns, 0/1)
     ├── MR-RATE-coreg/
     │   └── mri/
     │       └── batchXX/

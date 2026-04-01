@@ -1,0 +1,14 @@
+name: mr-rate-reports
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip=24.2
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      - torch==2.10.0+cu126
+      - vllm==0.17.0
+      - transformers>=4.57
+      - pandas
+      - tqdm
+      - huggingface-hub
