@@ -1,7 +1,7 @@
 """
 MR-RATE Repo Merger
 ===================
-Merges extracted study folders from derivative repos (coreg, atlas, vista-seg)
+Merges extracted study folders from derivative repos (coreg, atlas, nvseg-ctmr)
 into the base MR-RATE repo by rsync-ing each batch directory in-place.
 
 Mirrors the interface of download.py: same --output-base, same modality flags.
@@ -14,7 +14,7 @@ Arguments
 ---------
   --coreg  / --no-coreg       Merge co-registered MRI (MR-RATE-coreg/).    (default: disabled)
   --atlas  / --no-atlas       Merge atlas-space MRI (MR-RATE-atlas/).       (default: disabled)
-  --vista-seg / --no-vista-seg Merge VISTA segmentations (MR-RATE-vista-seg/). (default: disabled)
+  --nvseg / --no-nvseg        Merge NV-Segment-CTMR segmentations (MR-RATE-nvseg-ctmr/). (default: disabled)
   --batches BATCHES           Batches to merge. 'all' or comma-separated
                               zero-padded numbers, e.g. '00,02,10'.         (default: all)
   --output-base DIR           Root directory produced by download.py.       (default: ./data)
@@ -28,7 +28,7 @@ Usage examples
     python merge_downloaded_repos.py --coreg --batches 00,01 --output-base /data
 
     # All derivatives
-    python merge_downloaded_repos.py --coreg --atlas --vista-seg
+    python merge_downloaded_repos.py --coreg --atlas --nvseg
 """
 
 import argparse
@@ -48,7 +48,7 @@ BASE_REPO_NAME = "MR-RATE"
 DERIVATIVE_REPOS: List[Tuple[str, str]] = [
     ("coreg",     "MR-RATE-coreg"),
     ("atlas",     "MR-RATE-atlas"),
-    ("vista_seg", "MR-RATE-vista-seg"),
+    ("nvseg",      "MR-RATE-nvseg-ctmr"),
 ]
 
 
@@ -118,7 +118,7 @@ examples:
   python merge_downloaded_repos.py --coreg --atlas
 
   # Merge all derivatives for batches 00 and 01
-  python merge_downloaded_repos.py --coreg --atlas --vista-seg --batches 00,01
+  python merge_downloaded_repos.py --coreg --atlas --nvseg --batches 00,01
 
   # Custom output base
   python merge_downloaded_repos.py --coreg --output-base /data
@@ -139,11 +139,11 @@ examples:
         help="Merge MR-RATE-atlas/ into MR-RATE/. (default: disabled)",
     )
     modality_group.add_argument(
-        "--vista-seg",
+        "--nvseg",
         default=False,
         action=argparse.BooleanOptionalAction,
-        dest="vista_seg",
-        help="Merge MR-RATE-vista-seg/ into MR-RATE/. (default: disabled)",
+        dest="nvseg",
+        help="Merge MR-RATE-nvseg-ctmr/ into MR-RATE/. (default: disabled)",
     )
 
     parser.add_argument(
@@ -191,7 +191,7 @@ def main() -> int:
         selected_derivatives.append(repo_path)
 
     if not selected_derivatives:
-        print("ERROR: No derivative modalities selected. Pass at least one of --coreg, --atlas, --vista-seg.")
+        print("ERROR: No derivative modalities selected. Pass at least one of --coreg, --atlas, --nvseg.")
         sys.exit(1)
 
     selected_batches = _resolve_batches(args.batches)

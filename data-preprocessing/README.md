@@ -15,10 +15,13 @@ data-preprocessing/
 ├── README.md
 ├── pyproject.toml
 ├── environment.yml
+├── environment_reports.yml
 ├── data/
 │   ├── raw/                               # Raw PACS CSVs, DICOMs, NIfTIs, mapping Excels
 │   ├── interim/                           # Intermediate outputs from each step
 │   └── processed/                         # Final processed studies
+├── docs/
+│   └── dataset_guide.md                   # Dataset guide
 ├── logs/                                  # Per-batch log files
 ├── run/
 │   ├── run_mri_preprocessing.py           # Orchestrates steps 1–5
@@ -49,6 +52,7 @@ data-preprocessing/
 │       ├── registration/
 │       │   ├── registration.py            # ANTs co-registration and atlas registration
 │       │   └── upload.py                  # Zip registration outputs and upload to HF
+│       ├── brain_and_body_seg/            # Coming soon
 │       └── reports_preprocessing/             # Report anonymization, translation, structuring, QC, classification
 │           ├── 01_anonymization/
 │           ├── 02_translation/
@@ -78,7 +82,7 @@ Raw DICOM exports from PACS are noisy, heterogeneous, and contain patient-identi
 4. **[Modality Filtering](src/mr_rate_preprocessing/mri_preprocessing/modality_filtering.py)** — Filters classified series against acceptance criteria (modality type, acquisition plane, image shape/FOV, patient age) defined in [mri preprocessing config](src/mr_rate_preprocessing/configs/config_mri_preprocessing.py). Reads NIfTI headers in parallel to measure shape and spacing, constructs standardized modality IDs (e.g. `t1w-raw-sag`), and designates one T1w series per study as the center modality to be used later in registration and segmentation.
 
 5. **[Brain Segmentation & Defacing](src/mr_rate_preprocessing/mri_preprocessing/brain_segmentation_and_defacing.py)** — Using an adapted and parallelized version of the [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), a binary brain mask is predicted for each series with [HD-BET](https://github.com/MIC-DKFZ/HD-BET), and defacing is then applied with [Quickshear](https://github.com/nipy/quickshear) to remove identifiable facial features. Brain masks and defacing masks are saved alongside the defaced volumes.
-> For details on adaptations to `BrainLes-Preprocessing`, see [Why is this specific MRI preprocessing?](docs/dataset_guide.md#why-is-this-specific-mri-preprocessing).
+    > For details on adaptations to `BrainLes-Preprocessing`, see [Why is this specific MRI preprocessing?](docs/dataset_guide.md#why-is-this-specific-mri-preprocessing).
 
 6. **[Upload MRI to HF](src/mr_rate_preprocessing/mri_preprocessing/zip_and_upload.py)** — Validates that all expected modality files (image, brain mask, defacing mask) are present for each study, anonymizes study IDs to de-identified UIDs, zips each processed study folder, and uploads the zip files to the Hugging Face dataset repository in parallel. Supports the [Xet](https://huggingface.co/docs/hub/storage-backends) high-performance transfer backend.
 
@@ -115,23 +119,23 @@ Because different modalities within a study are acquired in different orientatio
 After MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where registration is performed independently.
 
 1. **[Registration](src/mr_rate_preprocessing/registration/registration.py)** — Following a similar approach to [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), within each study, moving modalities are co-registered to the T1-weighted center modality using [ANTs](https://github.com/antsx/ants). The center modality is then registered to the [MNI152 (ICBM 2009c Nonlinear Symmetric)](https://nist.mni.mcgill.ca/icbm-152-nonlinear-atlases-2009/) atlas, and all co-registered modalities are transformed to atlas space.
-> For details on adaptations to `BrainLes-Preprocessing`, see [Why is this specific MRI preprocessing?](docs/dataset_guide.md#why-is-this-specific-mri-preprocessing).
+    > For details on adaptations to `BrainLes-Preprocessing`, see [Why is this specific MRI preprocessing?](docs/dataset_guide.md#why-is-this-specific-mri-preprocessing).
 
 2. **[Upload to HF](src/mr_rate_preprocessing/registration/upload.py)** — Zips each registered study folder, and uploads the zip files to the Hugging Face dataset repository in parallel.
 
 ---
 
-### Multi-label Brain Segmentation
+### Multi-label Brain and Body Segmentation
 
-<!-- Figure placeholder: MR-RATE multi-label brain segmentation pipeline -->
+<!-- Figure placeholder: MR-RATE multi-label brain and body segmentation pipeline -->
 
-*(Coming soon)* Similar to registration, after MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where segmentation is performed independently. Voxel-wise anatomical segmentations are predicted for center modality volumes in native space using the [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) model based on [VISTA3D](https://github.com/Project-MONAI/VISTA/tree/main/vista3d), supporting region-of-interest analysis and various downstream tasks.
+*(Coming soon)* Similar to registration, after MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where segmentation is performed independently. Voxel-wise anatomical segmentations are predicted using [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) model: brain segmentations (`MR_BRAIN`) are produced for center modality volumes, and body segmentations (`MR_BODY`) are produced for all modalities (center + moving), all in native space, supporting region-of-interest analysis and various downstream tasks.
 
 ## ⬇️ Standalone Data Downloading Scripts
 
-- **[Download Repos](scripts/hf/download.py)** — Downloads data from any combination of the four MR-RATE HuggingFace repositories ([Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE), [Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg), [Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas), [Forithmus/MR-RATE-vista-seg](https://huggingface.co/datasets/Forithmus/MR-RATE-vista-seg)) into per-repo output directories under a shared base, with optional concurrent on-the-fly unzipping and zip deletion. Supports resumable batch-level downloads via `snapshot_download` and the Xet high-performance transfer backend.
+- **[Download Repos](scripts/hf/download.py)** — Downloads data from any combination of the four MR-RATE HuggingFace repositories ([Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE), [Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg), [Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas), [Forithmus/MR-RATE-nvseg-ctmr](https://huggingface.co/datasets/Forithmus/MR-RATE-nvseg-ctmr)) into per-repo output directories under a shared base, with optional concurrent on-the-fly unzipping and zip deletion. Supports resumable batch-level downloads via `snapshot_download` and the Xet high-performance transfer backend.
 
-- **[Merge Downloaded Repos](scripts/hf/merge_downloaded_repos.py)** — Merges extracted study folders from downloaded derivative repos (`MR-RATE-coreg/`, `MR-RATE-atlas/`, `MR-RATE-vista-seg/`) into the base `MR-RATE/` directory by moving each batch in-place. Mirrors the interface of `download.py`: same `--output-base`, same modality flags (`--coreg`, `--atlas`, `--vista-seg`), and same `--batches` selector. Filenames across repos are non-colliding by design, so subdirs that don't yet exist in the destination are renamed wholesale (instant move), while subdirs that already exist (e.g. `transform/`) are merged file-by-file.
+- **[Merge Downloaded Repos](scripts/hf/merge_downloaded_repos.py)** — Merges extracted study folders from downloaded derivative repos (`MR-RATE-coreg/`, `MR-RATE-atlas/`, `MR-RATE-nvseg-ctmr/`) into the base `MR-RATE/` directory by moving each batch in-place. Mirrors the interface of `download.py`: same `--output-base`, same modality flags (`--coreg`, `--atlas`, `--nvseg`), and same `--batches` selector. Filenames across repos are non-colliding by design, so subdirs that don't yet exist in the destination are renamed wholesale (instant move), while subdirs that already exist (e.g. `transform/`) are merged file-by-file.
 
 ## ⚙️ Installation
 
@@ -409,7 +413,7 @@ There are no runner scripts or config files for the registration pipeline, as th
 
 ---
 
-### Multi-label Brain Segmentation
+### Multi-label Brain and Body Segmentation
 
 *(Coming soon)*
 
@@ -432,7 +436,7 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
     | `--native` | on | `Forithmus/MR-RATE` | — | `./data/MR-RATE/` |
     | `--coreg` | off | `Forithmus/MR-RATE-coreg` | `_coreg` | `./data/MR-RATE-coreg/` |
     | `--atlas` | off | `Forithmus/MR-RATE-atlas` | `_atlas` | `./data/MR-RATE-atlas/` |
-    | `--vista-seg` | off | `Forithmus/MR-RATE-vista-seg` | `_vista-seg` | `./data/MR-RATE-vista-seg/` |
+    | `--nvseg` | off | `Forithmus/MR-RATE-nvseg-ctmr` | `_nvseg-ctmr` | `./data/MR-RATE-nvseg-ctmr/` |
 
     Pass `--no-mri` to disable all MRI downloads (metadata/reports only). Metadata and reports are always fetched from `Forithmus/MR-RATE` into `./data/MR-RATE/`. Pass `--no-metadata` and/or `--no-reports` to disable metadata and/or reports downloads. Pass `--xet-high-perf` to enable Hugging Face's high-performance Xet transfer backend, which uses all available CPUs and maximum bandwidth. If you haven't deleted zip-files, downloads are resumable: `snapshot_download` skips zip files already present locally. After every run, the script compares downloads with the remote repo files and prints a per-batch download status table.
 
@@ -450,7 +454,7 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
 
     # Download all MRI derivatives with a custom output base:
     python scripts/hf/download.py \
-        --native --coreg --atlas --vista-seg \
+        --native --coreg --atlas --nvseg \
         --no-metadata --no-reports --output-base /data
 
     # To check download status for all batches without downloading anything:
@@ -458,6 +462,34 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
     ```
 
     See `python scripts/hf/download.py --help` for the full list of options (workers, timeout, output base, etc.).
+
+    > **Alternative whole-repo download with the HF CLI:** The script above uses `snapshot_download` on a per-batch basis, which enables resumable downloads and a per-batch status table. If you prefer to download an entire repository in one go, you can use the `hf download` CLI command directly. Swap in the repository ID you need (`Forithmus/MR-RATE`, `Forithmus/MR-RATE-coreg`, `Forithmus/MR-RATE-atlas`, `Forithmus/MR-RATE-nvseg-ctmr`):
+    >
+    > ```bash
+    > # 1. Download all zips for a repo into a local directory
+    > HF_XET_HIGH_PERFORMANCE=1 hf download Forithmus/<repo-name> \
+    >     --repo-type dataset \
+    >     --include "mri/**.zip" \
+    >     --local-dir ./data/<repo-name>/
+    >
+    > # 2a. Unzip in parallel (keep zips)
+    > find ./data/<repo-name>/mri -name "*.zip" -print0 |
+    > xargs -0 -P 4 -I {} sh -c '
+    >   zip="$1"
+    >   dir=$(dirname "$zip")
+    >   unzip -n "$zip" -d "$dir"
+    > ' sh {}
+    >
+    > # 2b. Unzip in parallel and delete zips to reclaim disk
+    > find ./data/<repo-name>/mri -name "*.zip" -print0 |
+    > xargs -0 -P 4 -I {} sh -c '
+    >   zip="$1"
+    >   dir=$(dirname "$zip")
+    >   unzip -n "$zip" -d "$dir" && rm -f "$zip"
+    > ' sh {}
+    > ```
+    >
+    > `-P 4` sets the number of parallel unzip workers, adjust to match your CPU count. `unzip -n` skips files that already exist, making the unzip step safe to rerun.
 
     Output structure after downloading all data for batch XX, unzipping and deleting zips:
 
@@ -474,10 +506,8 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
     │   │               └── <study_uid>_<series_id>_defacing-mask.nii.gz                # Defacing mask (uint8)
     │   ├── metadata/
     │   │   └── batchXX_metadata.csv
-    │   ├── reports/
-    │   │   └── batchXX_reports.csv
-    │   └── pathology_labels/
-    │       └── mrrate_labels.csv                                                   # Binary pathology labels (37 columns, 0/1)
+    │   └── reports/
+    │       └── batchXX_reports.csv
     ├── MR-RATE-coreg/
     │   └── mri/
     │       └── batchXX/
@@ -502,19 +532,20 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
     │               │   └── <study_uid>_atlas_<center_series_id>_defacing-mask.nii.gz    # Defacing mask in atlas space (uint8)
     │               └── transform/
     │                   └── M_atlas_<center_series_id>.mat                               # Center→atlas ANTs transform
-    └── MR-RATE-vista-seg/
+    └── MR-RATE-nvseg-ctmr/
         └── mri/
             └── batchXX/
                 └── <study_uid>/
                     └── seg/
-                        └── <study_uid>_<center_series_id>_vista-seg.nii.gz              # Multi-label brain segmentation map
+                        ├── <study_uid>_<center_series_id>_nvseg-ctmr-brain.nii.gz       # Brain segmentations (NV-Segment-CTMR MR_BRAIN, center modality only)
+                        └── <study_uid>_<series_id>_nvseg-ctmr-wb.nii.gz                 # Whole-body segmentations (NV-Segment-CTMR MR_BODY, all modalities)
     ```
 
     Per-batch download status table example printed after downloads:
     ```
     Download Status
     ════════════════════════════════════════════════════════════════════════════════════════════
-    Batch     │    native     │     coreg     │     atlas     │   vista-seg   │ metadata│ reports
+    Batch     │    native     │     coreg     │     atlas     │  nvseg-ctmr   │ metadata│ reports
     ──────────┼───────────────┼───────────────┼───────────────┼───────────────┼─────────┼────────
     batchXX   │ ✅  120/120   │ ☑️  120/120 * │ 🔄  45/120    │ ❌  0/120     │   ✅    │   ✅
     ════════════════════════════════════════════════════════════════════════════════════════════
@@ -524,14 +555,14 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
 
 3. **(optional) Merge Downloaded Repos**
 
-    After downloading and unzipping, [`scripts/hf/merge_downloaded_repos.py`](scripts/hf/merge_downloaded_repos.py) can consolidate derivative repo contents into `MR-RATE/` on a per-study basis. Each selected derivative repo must already exist under `--output-base`. At least one of `--coreg`, `--atlas`, or `--vista-seg` must be passed.
+    After downloading and unzipping, [`scripts/hf/merge_downloaded_repos.py`](scripts/hf/merge_downloaded_repos.py) can consolidate derivative repo contents into `MR-RATE/` on a per-study basis. Each selected derivative repo must already exist under `--output-base`. At least one of `--coreg`, `--atlas`, or `--nvseg` must be passed.
 
     ```bash
     # Merge coreg and atlas into native for all batches
     python scripts/hf/merge_downloaded_repos.py --coreg --atlas
 
     # Merge all derivatives for specific batches only
-    python scripts/hf/merge_downloaded_repos.py --coreg --atlas --vista-seg --batches 00,01
+    python scripts/hf/merge_downloaded_repos.py --coreg --atlas --nvseg --batches 00,01
 
     # Custom output base
     python scripts/hf/merge_downloaded_repos.py --coreg --atlas --output-base /data
@@ -547,9 +578,10 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
                 └── <study_uid>/
                     ├── img/                                              # from MR-RATE/
                     ├── seg/                                              
-                    │   ├── <study_uid>_<series_id>_brain-mask.nii.gz     # from MR-RATE/
-                    │   ├── <study_uid>_<series_id>_defacing-mask.nii.gz  # from MR-RATE/
-                    │   └── <study_uid>_<series_id>_vista-seg.nii.gz      # merged from MR-RATE-vista-seg/
+                    │   ├── <study_uid>_<series_id>_brain-mask.nii.gz                    # from MR-RATE/
+                    │   ├── <study_uid>_<series_id>_defacing-mask.nii.gz                 # from MR-RATE/
+                    │   ├── <study_uid>_<center_series_id>_nvseg-ctmr-brain.nii.gz       # merged from MR-RATE-nvseg-ctmr/
+                    │   └── <study_uid>_<series_id>_nvseg-ctmr-wb.nii.gz                # merged from MR-RATE-nvseg-ctmr/
                     ├── coreg_img/                                        # merged from MR-RATE-coreg/
                     ├── coreg_seg/                                        # merged from MR-RATE-coreg/
                     ├── atlas_img/                                        # merged from MR-RATE-atlas/

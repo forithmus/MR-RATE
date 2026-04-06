@@ -9,7 +9,7 @@ HuggingFace repositories
     Forithmus/MR-RATE          — native-space MRI + metadata + reports
     Forithmus/MR-RATE-coreg    — co-registered MRI  (_coreg.zip)
     Forithmus/MR-RATE-atlas    — atlas-space MRI     (_atlas.zip)
-    Forithmus/MR-RATE-vista-seg — VISTA segmentations (_vista-seg.zip)
+    Forithmus/MR-RATE-nvseg-ctmr — NV-Segment-CTMR segmentations (_nvseg-ctmr.zip)
 
 Repository layout (all repos share the same mri/ structure)
 ------------------------------------------------------------
@@ -39,8 +39,8 @@ Each repo is downloaded into its own subdirectory under --output-base
         MR-RATE-atlas/
             mri/batch00/<study_uid>_atlas.zip
             mri/batch00/<study_uid>/   ← when --unzip
-        MR-RATE-vista-seg/
-            mri/batch00/<study_uid>_vista-seg.zip
+        MR-RATE-nvseg-ctmr/
+            mri/batch00/<study_uid>_nvseg-ctmr.zip
             mri/batch00/<study_uid>/   ← when --unzip
 
 How it works
@@ -85,7 +85,7 @@ Content selection:
   --native / --no-native      Download native-space MRI. (default: enabled)
   --coreg  / --no-coreg       Download co-registered MRI. (default: disabled)
   --atlas  / --no-atlas       Download atlas-space MRI. (default: disabled)
-  --vista-seg / --no-vista-seg Download VISTA segmentations. (default: disabled)
+  --nvseg / --no-nvseg        Download NV-Segment-CTMR segmentations. (default: disabled)
   --no-mri                    Disable all MRI derivatives (overrides the above).
   --metadata / --no-metadata  Download metadata CSV files. (default: enabled)
   --reports  / --no-reports   Download report CSV. (default: enabled)
@@ -124,7 +124,7 @@ Usage examples
     python download.py --batches 00,01 --no-native --coreg --atlas --no-metadata --no-reports
 
     # All derivatives, keep zips, custom output base
-    python download.py --native --coreg --atlas --vista-seg --no-metadata --no-reports \\
+    python download.py --native --coreg --atlas --nvseg --no-metadata --no-reports \\
         --output-base /data
 
     # Metadata and reports only (no MRI)
@@ -151,7 +151,7 @@ MRI_DERIVATIVES = {
     "native":    ("Forithmus/MR-RATE",           "",           "MR-RATE"),
     "coreg":     ("Forithmus/MR-RATE-coreg",     "_coreg",     "MR-RATE-coreg"),
     "atlas":     ("Forithmus/MR-RATE-atlas",     "_atlas",     "MR-RATE-atlas"),
-    "vista_seg": ("Forithmus/MR-RATE-vista-seg", "_vista-seg", "MR-RATE-vista-seg"),
+    "nvseg":      ("Forithmus/MR-RATE-nvseg-ctmr", "_nvseg-ctmr", "MR-RATE-nvseg-ctmr"),
 }
 
 NATIVE_REPO_ID = MRI_DERIVATIVES["native"][0]   # used for metadata / reports
@@ -299,7 +299,8 @@ def download_mri(
     batch_dir = output_dir / "mri" / batch_id
 
     # Phase 1 — bulk download via snapshot_download (concurrent, resumable)
-    print(f"  {label} Downloading {batch_id} from {repo_id} with {download_workers} workers ...")
+    workers_str = "all CPUs (xet-high-perf)" if os.environ.get("HF_XET_HIGH_PERFORMANCE") == "1" else f"{download_workers} workers"
+    print(f"  {label} Downloading {batch_id} from {repo_id} with {workers_str} ...")
     for attempt in range(1, SNAPSHOT_DOWNLOAD_MAX_RETRIES + 1):
         try:
             response = snapshot_download(
@@ -460,7 +461,7 @@ def print_download_status(list_repo_files, batches: List[str], output_base: Path
     native_files = repo_files.get(NATIVE_REPO_ID)
 
     # Step 2 — Build the table rows
-    # Columns: batch | native | coreg | atlas | vista_seg | metadata | reports
+    # Columns: batch | native | coreg | atlas | nvseg | metadata | reports
     DERIV_ORDER = list(MRI_DERIVATIVES.keys())  # preserves insertion order
 
     # We want to track whether any batch has a mixed-zip footnote
@@ -566,7 +567,7 @@ def print_download_status(list_repo_files, batches: List[str], output_base: Path
         "native":    "native",
         "coreg":     "coreg",
         "atlas":     "atlas",
-        "vista_seg": "vista-seg",
+        "nvseg":      "nvseg-ctmr",
     }
 
     header_parts = [f"{'Batch':<10}"]
@@ -621,7 +622,7 @@ examples:
   python download.py --batches 00,01 --no-native --coreg --atlas --no-metadata --no-reports
 
   # All derivatives, keep zips, custom output base
-  python download.py --native --coreg --atlas --vista-seg --no-metadata --no-reports \\
+  python download.py --native --coreg --atlas --nvseg --no-metadata --no-reports \\
       --output-base /data
 
   # Metadata and reports only (no MRI at all)
@@ -667,18 +668,18 @@ examples:
         help="Download atlas-space MRI from Forithmus/MR-RATE-atlas. (default: disabled)",
     )
     mri_group.add_argument(
-        "--vista-seg",
+        "--nvseg",
         default=False,
         action=argparse.BooleanOptionalAction,
-        dest="vista_seg",
-        help="Download VISTA segmentations from Forithmus/MR-RATE-vista-seg. (default: disabled)",
+        dest="nvseg",
+        help="Download NV-Segment-CTMR segmentations from Forithmus/MR-RATE-nvseg-ctmr. (default: disabled)",
     )
     mri_group.add_argument(
         "--no-mri",
         action="store_true",
         default=False,
         dest="no_mri",
-        help="Disable all MRI derivatives (overrides --native/--coreg/--atlas/--vista-seg).",
+        help="Disable all MRI derivatives (overrides --native/--coreg/--atlas/--nvseg).",
     )
 
     # Other content flags
@@ -768,7 +769,7 @@ def main() -> int:
 
     # --no-mri overrides all individual derivative flags
     if args.no_mri:
-        args.native = args.coreg = args.atlas = args.vista_seg = False
+        args.native = args.coreg = args.atlas = args.nvseg = False
 
     if args.delete_zips and not args.unzip:
         print(

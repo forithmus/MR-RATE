@@ -23,7 +23,7 @@ A practical reference for understanding the structure and contents of the [MR-RA
 - [3. Forithmus/MR-RATE — Native Space](#3-forithmusmr-rate--native-space)
 - [4. Forithmus/MR-RATE-coreg — Co-registered Space](#4-forithmusmr-rate-coreg--co-registered-space)
 - [5. Forithmus/MR-RATE-atlas — Atlas Space](#5-forithmusmr-rate-atlas--atlas-space)
-- [6. Forithmus/MR-RATE-vista-seg — Brain Segmentations](#6-forithmusmr-rate-vista-seg--brain-segmentations)
+- [6. Forithmus/MR-RATE-nvseg-ctmr — Segmentations](#6-forithmusmr-rate-nvseg-ctmr--segmentations)
 - [7. Downloading Dataset](#7-downloading-dataset)
 - [8. Connecting the Pieces](#8-connecting-the-pieces)
 
@@ -35,7 +35,7 @@ A practical reference for understanding the structure and contents of the [MR-RA
 
 MR-RATE is a large-scale multimodal dataset comprising **705,254** non-contrast and contrast-enhanced brain and spine MRI volumes from **83,425** unique patients across **98,334** studies, spanning multiple sequence types (T1, T2, FLAIR, SWI, MRA) and paired with radiology reports and metadata, together constituting a unified resource for multimodal brain and spine MRI research. 
 
-Raw DICOM files are converted to anonymized, defaced NIfTI volumes, spatially standardized via co-registration and atlas normalization, and enriched with multi-label brain segmentations. Reports are anonymized, translated, and restructured. All processing is carried out through open-source workflows, with the goal of transforming raw, heterogeneous clinical data into a clean, anonymized, and spatially standardized collection ready for downstream machine learning and neuroscientific research.
+Raw DICOM files are converted to anonymized, defaced NIfTI volumes, spatially standardized via co-registration and atlas normalization, and enriched with multi-label brain and body segmentations. Reports are anonymized, translated, and restructured. All processing is carried out through open-source workflows, with the goal of transforming raw, heterogeneous clinical data into a clean, anonymized, and spatially standardized collection ready for downstream machine learning and neuroscientific research.
 
 ---
 
@@ -77,7 +77,7 @@ For example: `t1w-raw-axi`, `flair-raw-sag`, `swi-raw-axi`.
 | Component  | Values                              | Meaning                                                                            |
 | ---------- | ----------------------------------- | ---------------------------------------------------------------------------------- |
 | `modality` | `t1w`, `t2w`, `flair`, `swi`, `mra` | MRI sequence type                                                                  |
-| `role`     | `raw`,                              | Raw (original) acquisition vs derived. MR-RATE currently includes raw series only. |
+| `role`     | `raw`                               | Raw (original) acquisition vs derived. MR-RATE currently includes raw series only. |
 | `plane`    | `axi`, `sag`, `cor`, `obl`          | Axial, sagittal, coronal, or oblique acquisition plane                             |
 
 
@@ -113,7 +113,7 @@ Series are accepted only when they meet all of the following criteria:
 
 ### Why are there registration and segmentation derivatives along with native-space data?
 
-While we currently only use native-space data for our model training, to support the broader research community, we additionally provide co-registered and atlas-registered volumes alongside multi-label brain segmentations. These derivatives allow researchers to bypass costly preprocessing steps and accelerate their own research workflows.
+While we currently only use native-space data for our model training, to support the broader research community, we additionally provide co-registered and atlas-registered volumes alongside multi-label brain and body segmentations. These derivatives allow researchers to bypass costly preprocessing steps and accelerate their own research workflows.
 
 ---
 
@@ -133,7 +133,7 @@ Different parts of the dataset serve different use cases and have very different
 
 ### How are studies connected across repositories?
 
-Each zip file is named after its study: `<study_uid>.zip`, `<study_uid>_coreg.zip`, `<study_uid>_atlas.zip`, `<study_uid>_vista-seg.zip`. The `study_uid` is the stable key that ties together a study's data across all four repositories, both on Hugging Face and on local disk after downloading.
+Each zip file is named after its study: `<study_uid>.zip`, `<study_uid>_coreg.zip`, `<study_uid>_atlas.zip`, `<study_uid>_nvseg-ctmr.zip`. The `study_uid` is the stable key that ties together a study's data across all four repositories, both on Hugging Face and on local disk after downloading.
 
 ---
 
@@ -149,13 +149,14 @@ Three identifiers tie together all the files in the dataset:
 
 ```
 patient_uid  →  groups all studies for one patient; joins to splits.csv
-study_uid    →  links all series in a study, the radiology report, and the zip files
-               across all four repos (MR-RATE, MR-RATE-coreg, MR-RATE-atlas, MR-RATE-vista-seg)
+study_uid    →  links all series in a study, the radiology report, pathology labels, and the zip files
+               across all four repos (MR-RATE, MR-RATE-coreg, MR-RATE-atlas, MR-RATE-nvseg-ctmr)
 series_id    →  maps a metadata row to its NIfTI filename
 ```
 
 **Metadata** (`batchXX_metadata.csv`) is series-level: one row per series, with `patient_uid`, `study_uid`, `series_id` columns.  
 **Reports** (`batchXX_reports.csv`) are study-level: one row per study, joined to metadata via `study_uid`.  
+**Pathology Labels** (`pathology_labels/mrrate_labels.csv`) are study-level: one row per study, with `study_uid` and 37 binary pathology columns, joined to metadata via `study_uid`.  
 **Splits** (`splits.csv`) are assigned at the patient level (all studies of a patient share the same split) but stored at the study level: one row per study, with `batch_id`, `patient_uid`, `study_uid`, `split` columns (`batch_id` is for the first appearance of a patient), joined to metadata via `study_uid`.
 
 ---
@@ -165,10 +166,10 @@ series_id    →  maps a metadata row to its NIfTI filename
 
 | Repository                                                                                     | Size    | Contents                                                                                                                        |
 | ---------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **[Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE)**                     | 8.2 TB  | Native-space defaced MRI volumes, brain masks, defacing masks, metadata CSVs, radiology report CSVs, data splits                |
+| **[Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE)**                     | 8.1 TB  | Native-space defaced MRI volumes, brain masks, defacing masks, metadata CSVs, radiology report CSVs, pathology label CSV, data splits |
 | **[Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg)**         | 17.6 TB | MRI volumes co-registered to the study's T1w center modality, registration transforms, center modality brain and defacing masks |
-| **[Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas)**         | 12.3 TB | MRI volumes in MNI152 atlas space, atlas registration transforms, center modality brain and defacing masks in atlas space       |
-| **[Forithmus/MR-RATE-vista-seg](https://huggingface.co/datasets/Forithmus/MR-RATE-vista-seg)** | 52 GB   | Multi-label brain segmentation maps for selected center modality volumes in native space                                        |
+| **[Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas)**         | 12.3 TB | MRI volumes in MNI152 atlas space, atlas registration transforms, center modality brain and defacing masks in atlas-space       |
+| **[Forithmus/MR-RATE-nvseg-ctmr](https://huggingface.co/datasets/Forithmus/MR-RATE-nvseg-ctmr)** | 415 GB   | Brain segmentations for center modality volumes and whole-body segmentations for all modalities, in native-space        |
 
 
 ---
@@ -193,6 +194,8 @@ Forithmus/MR-RATE
 ├── reports/
 │   ├── batch00_reports.csv
 │   └── ...
+├── pathology_labels/
+│   └── mrrate_labels.csv
 └── splits.csv
 ```
 
@@ -301,9 +304,19 @@ Patient-level splits for reproducible benchmarking. All studies and series of a 
 
 ---
 
+### Pathology Labels
+
+**File:** `pathology_labels/mrrate_labels.csv`  
+**Granularity:** One row per study  
+**Join column:** `study_uid`
+
+Binary (0/1) presence labels for 37 SNOMED CT-grounded brain and spine MRI pathologies, derived from the `findings` section of each structured report via a three-step LLM classification pipeline. See the CSV header for the full list of pathology column names. The full pipeline is documented in [Pathology Classification](../README.md#radiology-report-preprocessing).
+
+---
+
 ## 4. Forithmus/MR-RATE-coreg — Co-registered Space
 
-Within each study, all brain MRI volumes are spatially aligned to a shared reference frame. A single T1w raw series is designated the **center modality** (marked `is_center_modality=True` in the metadata). All other series in the study, the **moving modalities**, are registered to the center using [ANTs](https://github.com/antsx/ants), bringing every brain MRI sequence of a study into a common anatomical space for within-study cross-modal analysis. The following registration parameters are used: `Rigid` transform, `linear` interpolation, and `Mattes` (Mattes mutual information) metric.
+Within each study, all MRI volumes are spatially aligned to a shared reference frame. A single T1w raw series is designated the **center modality** (marked `is_center_modality=True` in the metadata). All other series in the study, the **moving modalities**, are registered to the center using [ANTs](https://github.com/antsx/ants), bringing every MRI sequence of a study into a common anatomical space for within-study cross-modal analysis. The following registration parameters are used: `Rigid` transform, `linear` interpolation, and `Mattes` (Mattes mutual information) metric.
 
 ### Repository layout on Hugging Face
 
@@ -371,19 +384,17 @@ See [Registration](../README.md#registration) for the full implementation detail
 
 ---
 
-## 6. Forithmus/MR-RATE-vista-seg — Brain Segmentations
+## 6. Forithmus/MR-RATE-nvseg-ctmr — Segmentations
 
-Voxel-wise multi-label brain segmentations are predicted for the center modality of each study in native space using [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) based on [VISTA3D](https://github.com/Project-MONAI/VISTA/tree/main/vista3d). Segmentations support region-of-interest analysis and other downstream tasks requiring anatomical parcellations.
-
-> **Coverage note**: Not all studies have a segmentation. Segmentation is only run for center modality volumes that pass additional shape and spacing quality thresholds for optimal NV-Segment-CTMR performance. Check whether a `<study_uid>_vista-seg.zip` exists in the batch folder before assuming coverage for a given study.
+Voxel-wise multi-label segmentations are predicted for each study in native-space using [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) model. Two segmentation types are produced per study: brain segmentations for the center modality volume (`MR_BRAIN`), and whole-body segmentations for all modalities including the center (`MR_BODY`). Segmentations support region-of-interest analysis and other downstream tasks requiring anatomical parcellations.
 
 ### Repository layout on Hugging Face
 
 ```plaintext
-Forithmus/MR-RATE-vista-seg
+Forithmus/MR-RATE-nvseg-ctmr
 └── mri/
     ├── batch00/
-    │   ├── <study_uid>_vista-seg.zip
+    │   ├── <study_uid>_nvseg-ctmr.zip
     │   └── ...
     └── ...                   (batch00–batch27)
 ```
@@ -393,12 +404,13 @@ Forithmus/MR-RATE-vista-seg
 ```plaintext
 <study_uid>/
 └── seg/
-    └── <study_uid>_<center_series_id>_vista-seg.nii.gz   # Multi-label segmentation map
+    ├── <study_uid>_<center_series_id>_nvseg-ctmr-brain.nii.gz   # Brain segmentations (NV-Segment-CTMR MR_BRAIN, center modality only)
+    └── <study_uid>_<series_id>_nvseg-ctmr-wb.nii.gz             # Whole-body segmentations (NV-Segment-CTMR MR_BODY, all modalities)
 ```
 
-The segmentation map is in the same native space and voxel grid as the center modality image in `MR-RATE/mri/batchXX/<study_uid>/img/`. Segmentation labels follow the NV-Segment-CTMR label map.
+All segmentations are in the same native-space and voxel grid as their corresponding images in `MR-RATE/mri/batchXX/<study_uid>/img/`. Segmentation labels follow the [NV-Segment-CTMR label dictionary](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR/blob/main/NV-Segment-CTMR/configs/label_dict.json).
 
-See [Multi-label Brain Segmentation](../README.md#multi-label-brain-segmentation) for the full implementation details.
+See [Multi-label Brain and Body Segmentation](../README.md#multi-label-brain-and-body-segmentation) for the full implementation details.
 
 ---
 
@@ -417,13 +429,15 @@ flowchart TD
     SplitsRow["study_uid\n(splits.csv)"]
     MetaRow["metadata row\n(batchXX_metadata.csv)\none row per series"]
     ReportRow["report row\n(batchXX_reports.csv)\none row per study"]
+    PathologyRow["pathology labels row\n(mrrate_labels.csv)\none row per study"]
     NativeZip["study_uid.zip\n(MR-RATE/mri/)"]
     CoregZip["study_uid_coreg.zip\n(MR-RATE-coreg/mri/)"]
     AtlasZip["study_uid_atlas.zip\n(MR-RATE-atlas/mri/)"]
-    SegZip["study_uid_vista-seg.zip\n(MR-RATE-vista-seg/mri/)"]
+    SegZip["study_uid_nvseg-ctmr.zip\n(MR-RATE-nvseg-ctmr/mri/)"]
 
     SplitsRow -->|"study_uid"| MetaRow
     MetaRow -->|"study_uid"| ReportRow
+    MetaRow -->|"study_uid"| PathologyRow
     MetaRow -->|"study_uid"| NativeZip
     MetaRow -->|"study_uid"| CoregZip
     MetaRow -->|"study_uid"| AtlasZip
