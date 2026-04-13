@@ -195,7 +195,10 @@ class MrRateTrainer(nn.Module):
         self.lr = lr
 
         # Initialize optimizer
-        all_parameters = set(model.parameters())
+        # IMPORTANT: use list, not set — set iteration order is non-deterministic
+        # across runs, which causes optimizer state dict keys (positional indices)
+        # to map to wrong parameters on resume, crashing with shape mismatches.
+        all_parameters = list(model.parameters())
         self.optim = get_optimizer(all_parameters, lr=lr, wd=wd)
 
         # Initialize learning rate scheduler
