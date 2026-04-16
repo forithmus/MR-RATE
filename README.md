@@ -2,21 +2,18 @@
 
 Welcome to the official repository for MR-RATE, a pioneering vision-language model and 3D medical imaging dataset for Magnetic Resonance Imaging.
 
-**🔗 Resources:**
+**Resources:**
 
-- Paper: **coming soon**
-- Model Weights: **coming soon**
+- Paper: *coming soon*
+- Model Weights: *coming soon*
 - Dataset: **[MR-RATE on Hugging Face](https://huggingface.co/datasets/Forithmus/MR-RATE)**
+- Related Foundation Models: **[NV-Generate-MR-Brain](https://huggingface.co/nvidia/NV-Generate-MR-Brain)** by NVIDIA
 
----
-
-## 🧠 Overview
+## Overview
 
 **MR-RATE** is a unified framework for **vision-language modeling in brain and spine MRI**, comprising a large-scale 3D medical imaging dataset that uniquely pairs textual data with brain and spine MRI volumes and a contrastive pretraining pipeline that aligns multi-sequence MRI volumes with radiology reports using VL-CABS loss.
 
----
-
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 MR-RATE/
@@ -30,26 +27,23 @@ MR-RATE/
 
 Each folder includes its own `README.md` detailing configuration, dependencies, and usage.
 
----
-
-## 🛠️ Components
+## Components
 
 
 | Component                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Data Preprocessing**      | End-to-end pipeline converting raw DICOM exports into clean, anonymized, and spatially standardized NIfTI volumes. Covers DICOM-to-NIfTI conversion, PACS metadata filtering, modality classification, brain segmentation & defacing, co-registration to a shared T1w reference, and atlas registration to MNI152 space. Also includes the radiology report preprocessing pipeline (anonymization, translation, structuring, QC) and LLM-based pathology classification producing binary labels for 37 SNOMED CT-grounded pathologies. Includes standalone scripts for downloading and merging all MR-RATE Hugging Face repositories. |
+| **Data Preprocessing**      | End-to-end pipeline converting raw DICOM exports into clean, anonymized, and spatially standardized NIfTI volumes. Covers DICOM-to-NIfTI conversion, PACS metadata filtering, modality classification, binary brain segmentation & defacing, co-registration to a shared T1w reference, atlas registration to MNI152 space, and multi-label anatomical segmentations. Also includes the radiology report preprocessing pipeline (anonymization, translation, structuring, QC) and LLM-based pathology classification producing binary labels for 37 SNOMED CT-grounded pathologies. Includes standalone scripts for downloading and merging all MR-RATE Hugging Face repositories. |
 | **Contrastive Pretraining** | Contrastive vision-language model that aligns multi-sequence MRI volumes and radiology reports using VL-CABS loss. Uses a VJEPA2 (ViT-G) image encoder with LoRA fine-tuning and a BiomedVLP-CXR-BERT text encoder. Supports four multi-volume fusion modes (`early`, `mid_cnn`, `late`, `late_attn`) and three image spaces (`native_space`, `coreg_space`, `atlas_space`). Enables zero-shot brain MRI pathology classification at inference time. |
 
-
----
-
-## 🧩 Workflow Summary
+## Workflow Summary
 
 1. **Download preprocessed data** directly from [MR-RATE on Hugging Face](https://huggingface.co/datasets/Forithmus/MR-RATE) (see `data-preprocessing/` for preprocessing details)
 2. **Train the contrastive model** on (multi-sequence MRI, radiology report) pairs using `contrastive-pretraining/`
 4. **Run zero-shot inference** for brain MRI pathology classification using trained model weights and `contrastive-pretraining/`
 
----
+## Related Foundation Models
+
+The MR-RATE dataset was used by NVIDIA to train [NV-Generate-MR-Brain](https://huggingface.co/nvidia/NV-Generate-MR-Brain), a 3D latent diffusion model capable of generating high-quality, high-resolution synthetic brain MRI volumes for T1, Fluid Attenuated Inversion Recovery (FLAIR), T2, and Susceptibility Weighted Imaging (SWI). This model is available under the permissive NVIDIA Open Model License, enabling researchers and developers to adapt it for their own downstream medical AI applications.
 
 ## Citation
 
@@ -59,8 +53,6 @@ If you use this repository, the dataset, or any of its components, please cite:
 Coming soon
 ```
 
----
-
 ## License
 
 We are committed to fostering innovation and collaboration in the research community. All elements of the MR-RATE repository are released under the **[Creative Commons Attribution–NonCommercial–ShareAlike (CC BY-NC-SA)](https://creativecommons.org/licenses/by-nc-sa/4.0/)** license.
@@ -68,3 +60,13 @@ We are committed to fostering innovation and collaboration in the research commu
 This allows all elements to be freely used, modified, and shared for **non-commercial research purposes**, provided that the original work is properly cited and any derivative works are distributed under the same license.
 
 For commercial inquiries related to MR-RATE, please contact: contact@forithmus.com
+
+## Acknowledgements
+
+This project is conducted by Forithmus and the University of Zurich, in collaboration with NVIDIA and Istanbul Medipol University. 
+
+We are grateful to NVIDIA for their support, which made this work possible. We also sincerely thank Istanbul Medipol University for their support and for providing the data used in this project. High-performance computing resources were provided by NVIDIA and the University of Zurich ScienceCluster. We would also like to thank the following individuals from NVIDIA for their contributions to the development of MR-RATE: Marc Edgar, Daguang Xu, Dong Yang, Yucheng Tang, Can Zhao, Andriy Myronenko, and Pengfei Guo. 
+
+This collaboration represents an important step toward the long-term mission to make high-quality medical intelligence accessible worldwide.
+
+<img width="19511" height="3759" alt="logo" src="https://github.com/user-attachments/assets/dccbf4ed-09a9-43e8-ae22-9b862c6cbf52" />

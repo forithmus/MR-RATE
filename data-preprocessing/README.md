@@ -2,13 +2,13 @@
 
 This submodule contains the data preprocessing pipelines and scripts used for building the [MR-RATE dataset](https://huggingface.co/datasets/Forithmus/MR-RATE), a novel dataset of brain and spine MRI volumes paired with corresponding radiology text reports and metadata.
 
-➡️ To start using the dataset right away, refer to the [Dataset Guide](docs/dataset_guide.md) and [Downloading Dataset](#downloading-dataset).
+To start using the dataset right away, refer to the [Dataset Guide](docs/dataset_guide.md) and [Downloading Dataset](#downloading-dataset).
 
-## 🧠 Overview
+## Overview
 
 In MR-RATE, brain and spine MRI examinations are acquired from patients using MRI scanners and organized into multiple imaging sequence categories, including T1-weighted, T2-weighted, FLAIR, SWI, and MRA, constituting the series of a study. Then, each study is paired with associated metadata and a radiology report, which is produced by the radiologists during clinical interpretation. Together, these components constitute the MR-RATE dataset for multimodal brain and spine MRI research. Via preprocessing steps applied here, our goal is to convert raw, heterogeneous clinical data into a clean, anonymized, and spatially standardized collection that is ready for downstream machine learning and neuroscientific research.
 
-## 📁 Directory Structure
+## Directory Structure
 
 ```plaintext
 data-preprocessing/
@@ -52,7 +52,7 @@ data-preprocessing/
 │       ├── registration/
 │       │   ├── registration.py            # ANTs co-registration and atlas registration
 │       │   └── upload.py                  # Zip registration outputs and upload to HF
-│       ├── brain_and_body_seg/            # Coming soon
+│       ├── multi_label_seg/               # Coming soon - NV-Segment-CTMR multi-label segmentation 
 │       └── reports_preprocessing/             # Report anonymization, translation, structuring, QC, classification
 │           ├── 01_anonymization/
 │           ├── 02_translation/
@@ -65,7 +65,7 @@ data-preprocessing/
 └── figures/                               # Figures for submodule
 ```
 
-## 🛠️ Preprocessing Pipelines
+## Preprocessing Pipelines
 
 ### MRI & Metadata Preprocessing
 
@@ -73,20 +73,20 @@ Raw DICOM exports from PACS are noisy, heterogeneous, and contain patient-identi
 
 ![MR-RATE MRI and Metadata Preprocessing Pipeline](figures/mr-rate_mri_preproc_pipe.jpg)
 
-1. **[DICOM to NIfTI Conversion](src/mr_rate_preprocessing/mri_preprocessing/dcm2nii.py)** — Reads a CSV of DICOM folder paths, extracts the AccessionNumber from each folder's first DICOM file, and runs `dcm2niix` to produce gzip-compressed NIfTI files and JSON sidecars organized into per-accession subfolders.
+1. **[DICOM to NIfTI Conversion](src/mr_rate_preprocessing/mri_preprocessing/dcm2nii.py)**: Reads a CSV of DICOM folder paths, extracts the AccessionNumber from each folder's first DICOM file, and runs `dcm2niix` to produce gzip-compressed NIfTI files and JSON sidecars organized into per-accession subfolders.
 
-2. **[PACS Metadata Filtering](src/mr_rate_preprocessing/mri_preprocessing/pacs_metadata_filtering.py)** — Loads raw DICOM metadata exports from PACS, enforces required columns, retains as many optional columns as possible, and removes rows with missing critical identifiers or duplicate series.
+2. **[PACS Metadata Filtering](src/mr_rate_preprocessing/mri_preprocessing/pacs_metadata_filtering.py)**: Loads raw DICOM metadata exports from PACS, enforces required columns, retains as many optional columns as possible, and removes rows with missing critical identifiers or duplicate series.
 
-3. **[Series Classification](src/mr_rate_preprocessing/mri_preprocessing/series_classification.py)** — Assigns each series a modality label (T1w, T2w, SWI, …) and additional flags (`is_derived`, `sequence_family`, …) using a 5-level rule hierarchy: DICOM diffusion tags → vendor-specific sequence IDs → scanning sequence parameters → description keyword matching → numeric fallback.
+3. **[Series Classification](src/mr_rate_preprocessing/mri_preprocessing/series_classification.py)**: Assigns each series a modality label (T1w, T2w, SWI, …) and additional flags (`is_derived`, `sequence_family`, …) using a 5-level rule hierarchy: DICOM diffusion tags → vendor-specific sequence IDs → scanning sequence parameters → description keyword matching → numeric fallback.
 
-4. **[Modality Filtering](src/mr_rate_preprocessing/mri_preprocessing/modality_filtering.py)** — Filters classified series against acceptance criteria (modality type, acquisition plane, image shape/FOV, patient age) defined in [mri preprocessing config](src/mr_rate_preprocessing/configs/config_mri_preprocessing.py). Reads NIfTI headers in parallel to measure shape and spacing, constructs standardized modality IDs (e.g. `t1w-raw-sag`), and designates one T1w series per study as the center modality to be used later in registration and segmentation.
+4. **[Modality Filtering](src/mr_rate_preprocessing/mri_preprocessing/modality_filtering.py)**: Filters classified series against acceptance criteria (modality type, acquisition plane, image shape/FOV, patient age) defined in [mri preprocessing config](src/mr_rate_preprocessing/configs/config_mri_preprocessing.py). Reads NIfTI headers in parallel to measure shape and spacing, constructs standardized modality IDs (e.g. `t1w-raw-sag`), and designates one T1w series per study as the center modality to be used later in registration and segmentation.
 
-5. **[Brain Segmentation & Defacing](src/mr_rate_preprocessing/mri_preprocessing/brain_segmentation_and_defacing.py)** — Using an adapted and parallelized version of the [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), a binary brain mask is predicted for each series with [HD-BET](https://github.com/MIC-DKFZ/HD-BET), and defacing is then applied with [Quickshear](https://github.com/nipy/quickshear) to remove identifiable facial features. Brain masks and defacing masks are saved alongside the defaced volumes.
+5. **[Brain Segmentation & Defacing](src/mr_rate_preprocessing/mri_preprocessing/brain_segmentation_and_defacing.py)**: Using an adapted and parallelized version of the [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), a binary brain mask is predicted for each series with [HD-BET](https://github.com/MIC-DKFZ/HD-BET), and defacing is then applied with [Quickshear](https://github.com/nipy/quickshear) to remove identifiable facial features. Brain masks and defacing masks are saved alongside the defaced volumes.
     > For details on adaptations to `BrainLes-Preprocessing`, see [Why is this specific MRI preprocessing?](docs/dataset_guide.md#why-is-this-specific-mri-preprocessing).
 
-6. **[Upload MRI to HF](src/mr_rate_preprocessing/mri_preprocessing/zip_and_upload.py)** — Validates that all expected modality files (image, brain mask, defacing mask) are present for each study, anonymizes study IDs to de-identified UIDs, zips each processed study folder, and uploads the zip files to the Hugging Face dataset repository in parallel. Supports the [Xet](https://huggingface.co/docs/hub/storage-backends) high-performance transfer backend.
+6. **[Upload MRI to HF](src/mr_rate_preprocessing/mri_preprocessing/zip_and_upload.py)**: Validates that all expected modality files (image, brain mask, defacing mask) are present for each study, anonymizes study IDs to de-identified UIDs, zips each processed study folder, and uploads the zip files to the Hugging Face dataset repository in parallel. Supports the [Xet](https://huggingface.co/docs/hub/storage-backends) high-performance transfer backend.
 
-7. **[Upload metadata to HF](src/mr_rate_preprocessing/mri_preprocessing/prepare_metadata.py)** — Validates that all expected modality files (image, brain mask, defacing mask) are present for each study, merges patient IDs and anonymized study dates from mapping files, drops sensitive columns, and uploads a clean metadata CSV to Hugging Face.
+7. **[Upload metadata to HF](src/mr_rate_preprocessing/mri_preprocessing/prepare_metadata.py)**: Validates that all expected modality files (image, brain mask, defacing mask) are present for each study, merges patient IDs and anonymized study dates from mapping files, drops sensitive columns, and uploads a clean metadata CSV to Hugging Face.
 
 ---
 
@@ -96,17 +96,17 @@ Raw DICOM exports from PACS are noisy, heterogeneous, and contain patient-identi
 
 Raw Turkish radiology reports are converted to structured English through an iterative LLM-based pipeline using Qwen3.5-35B-A3B-FP8 via vLLM. Each step follows a **run → automated QC → retry → manual review** loop until quality thresholds are met. See [`reports_preprocessing/README.md`](src/mr_rate_preprocessing/reports_preprocessing/README.md) for full pipeline documentation.
 
-1. **[Anonymization](src/mr_rate_preprocessing/reports_preprocessing/01_anonymization/anonymize_reports_parallel.py)** — Replaces patient names, dates, hospitals, and other PHI with deterministic tokens (`[patient_1]`, `[date_1]`, etc.). Validated to ensure no PHI leakage.
+1. **[Anonymization](src/mr_rate_preprocessing/reports_preprocessing/01_anonymization/anonymize_reports_parallel.py)**: Replaces patient names, dates, hospitals, and other PHI with deterministic tokens (`[patient_1]`, `[date_1]`, etc.). Validated to ensure no PHI leakage.
 
-2. **[Translation](src/mr_rate_preprocessing/reports_preprocessing/02_translation/translate_reports_parallel.py)** — Turkish-to-English translation preserving medical terminology, anonymization tokens, and report structure.
+2. **[Translation](src/mr_rate_preprocessing/reports_preprocessing/02_translation/translate_reports_parallel.py)**: Turkish-to-English translation preserving medical terminology, anonymization tokens, and report structure.
 
-3. **[Translation QC](src/mr_rate_preprocessing/reports_preprocessing/03_translation_qc/)** — LLM-based quality check for translation completeness and accuracy, rule-based detection of remaining Turkish text, and automated retranslation of failures.
+3. **[Translation QC](src/mr_rate_preprocessing/reports_preprocessing/03_translation_qc/)**: LLM-based quality check for translation completeness and accuracy, rule-based detection of remaining Turkish text, and automated retranslation of failures.
 
-4. **[Structuring](src/mr_rate_preprocessing/reports_preprocessing/04_structuring/)** — Extracts four sections from each report: `clinical_information`, `technique`, `findings`, and `impression`. Uses a two-pass approach with a no-think fallback for reports where chain-of-thought reasoning exhausts the token budget.
+4. **[Structuring](src/mr_rate_preprocessing/reports_preprocessing/04_structuring/)**: Extracts four sections from each report: `clinical_information`, `technique`, `findings`, and `impression`. Uses a two-pass approach with a no-think fallback for reports where chain-of-thought reasoning exhausts the token budget.
 
-5. **[Structure QC](src/mr_rate_preprocessing/reports_preprocessing/05_structure_qc/)** — LLM-based verification comparing structured output against the raw report, checking for missing content, hallucinations, and misplaced sections.
+5. **[Structure QC](src/mr_rate_preprocessing/reports_preprocessing/05_structure_qc/)**: LLM-based verification comparing structured output against the raw report, checking for missing content, hallucinations, and misplaced sections.
 
-6. **[Pathology Classification](src/mr_rate_preprocessing/reports_preprocessing/06_pathology_classification/)** — Three-step LLM-based binary classification of the `findings` section against 37 SNOMED CT-grounded brain/spine MRI pathologies. Step 1 produces chain-of-thought reasoning with exact quotes, step 2 extracts structured JSON labels, and step 3 verifies PRESENT labels to remove false positives from invalid inference. Outputs a CSV with `study_uid` and 37 binary (0/1) pathology columns.
+6. **[Pathology Classification](src/mr_rate_preprocessing/reports_preprocessing/06_pathology_classification/)**: Three-step LLM-based binary classification of the `findings` section against 37 SNOMED CT-grounded brain/spine MRI pathologies. Step 1 produces chain-of-thought reasoning with exact quotes, step 2 extracts structured JSON labels, and step 3 verifies PRESENT labels to remove false positives from invalid inference. Outputs a CSV with `study_uid` and 37 binary (0/1) pathology columns.
 
 ---
 
@@ -118,26 +118,26 @@ Because different modalities within a study are acquired in different orientatio
 
 After MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where registration is performed independently.
 
-1. **[Registration](src/mr_rate_preprocessing/registration/registration.py)** — Following a similar approach to [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), within each study, moving modalities are co-registered to the T1-weighted center modality using [ANTs](https://github.com/antsx/ants). The center modality is then registered to the [MNI152 (ICBM 2009c Nonlinear Symmetric)](https://nist.mni.mcgill.ca/icbm-152-nonlinear-atlases-2009/) atlas, and all co-registered modalities are transformed to atlas space.
+1. **[Registration](src/mr_rate_preprocessing/registration/registration.py)**: Following a similar approach to [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing), within each study, moving modalities are co-registered to the T1-weighted center modality using [ANTs](https://github.com/antsx/ants). The center modality is then registered to the [MNI152 (ICBM 2009c Nonlinear Symmetric)](https://nist.mni.mcgill.ca/icbm-152-nonlinear-atlases-2009/) atlas, and all co-registered modalities are transformed to atlas space.
     > For details on adaptations to `BrainLes-Preprocessing`, see [Why is this specific MRI preprocessing?](docs/dataset_guide.md#why-is-this-specific-mri-preprocessing).
 
-2. **[Upload to HF](src/mr_rate_preprocessing/registration/upload.py)** — Zips each registered study folder, and uploads the zip files to the Hugging Face dataset repository in parallel.
+2. **[Upload to HF](src/mr_rate_preprocessing/registration/upload.py)**: Zips each registered study folder, and uploads the zip files to the Hugging Face dataset repository in parallel.
 
 ---
 
-### Multi-label Brain and Body Segmentation
+### Multi-label Segmentation
 
-<!-- Figure placeholder: MR-RATE multi-label brain and body segmentation pipeline -->
+<!-- Figure placeholder: MR-RATE multi-label segmentation pipeline -->
 
-*(Coming soon)* Similar to registration, after MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where segmentation is performed independently. Voxel-wise anatomical segmentations are predicted using [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) model: brain segmentations (`MR_BRAIN`) are produced for center modality volumes, and body segmentations (`MR_BODY`) are produced for all modalities (center + moving), all in native space, supporting region-of-interest analysis and various downstream tasks.
+*[(Coming soon)](src/mr_rate_preprocessing/multi_label_seg)* Similar to registration, after MRI & Metadata Preprocessing is run, processed and uploaded studies are downloaded to a separate server where segmentation is performed independently. Voxel-wise anatomical multi-label brain segmentations are predicted using the [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR/tree/main/NV-Segment-CTMR#quick-start)(MRI_BRAIN) model, supporting region-of-interest analysis and various downstream tasks. Additionally, voxel-wise anatomical multi-label body segmentations are predicted using the NV-Segment-CTMR (MRI_BODY) model.
 
-## ⬇️ Standalone Data Downloading Scripts
+## Standalone Data Downloading Scripts
 
-- **[Download Repos](scripts/hf/download.py)** — Downloads data from any combination of the four MR-RATE HuggingFace repositories ([Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE), [Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg), [Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas), [Forithmus/MR-RATE-nvseg-ctmr](https://huggingface.co/datasets/Forithmus/MR-RATE-nvseg-ctmr)) into per-repo output directories under a shared base, with optional concurrent on-the-fly unzipping and zip deletion. Supports resumable batch-level downloads via `snapshot_download` and the Xet high-performance transfer backend.
+- **[Download Repos](scripts/hf/download.py)**: Downloads data from any combination of the four MR-RATE HuggingFace repositories ([Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE), [Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg), [Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas), [Forithmus/MR-RATE-nvseg-ctmr](https://huggingface.co/datasets/Forithmus/MR-RATE-nvseg-ctmr)) into per-repo output directories under a shared base, with optional concurrent on-the-fly unzipping and zip deletion. Supports resumable batch-level downloads via `snapshot_download` and the Xet high-performance transfer backend.
 
-- **[Merge Downloaded Repos](scripts/hf/merge_downloaded_repos.py)** — Merges extracted study folders from downloaded derivative repos (`MR-RATE-coreg/`, `MR-RATE-atlas/`, `MR-RATE-nvseg-ctmr/`) into the base `MR-RATE/` directory by moving each batch in-place. Mirrors the interface of `download.py`: same `--output-base`, same modality flags (`--coreg`, `--atlas`, `--nvseg`), and same `--batches` selector. Filenames across repos are non-colliding by design, so subdirs that don't yet exist in the destination are renamed wholesale (instant move), while subdirs that already exist (e.g. `transform/`) are merged file-by-file.
+- **[Merge Downloaded Repos](scripts/hf/merge_downloaded_repos.py)**: Merges extracted study folders from downloaded derivative repos (`MR-RATE-coreg/`, `MR-RATE-atlas/`, `MR-RATE-nvseg-ctmr/`) into the base `MR-RATE/` directory by moving each batch in-place. Mirrors the interface of `download.py`: same `--output-base`, same modality flags (`--coreg`, `--atlas`, `--nvseg`), and same `--batches` selector. Filenames across repos are non-colliding by design, so subdirs that don't yet exist in the destination are renamed wholesale (instant move), while subdirs that already exist (e.g. `transform/`) are merged file-by-file.
 
-## ⚙️ Installation
+## Installation
 
 1. **Clone the repository:**
 
@@ -149,7 +149,7 @@ After MRI & Metadata Preprocessing is run, processed and uploaded studies are do
 2. **Create and activate conda environment, install the package in editable mode:**
 
    ```bash
-   # For MRI preprocessing (DICOM conversion, segmentation, registration):
+   # For MRI preprocessing and registration:
    conda env create -f environment.yml
    conda activate mr-rate-preprocessing
    pip install -e .
@@ -169,7 +169,7 @@ After MRI & Metadata Preprocessing is run, processed and uploaded studies are do
    # or: export HF_TOKEN=<your_token>
    ```
 
-## 🧩 How to Use
+## How to Use
 
 ### MRI & Metadata Preprocessing
 
@@ -413,7 +413,7 @@ There are no runner scripts or config files for the registration pipeline, as th
 
 ---
 
-### Multi-label Brain and Body Segmentation
+### Multi-label Segmentation
 
 *(Coming soon)*
 
@@ -423,7 +423,7 @@ There are no runner scripts or config files for the registration pipeline, as th
 
 For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/datasets/Forithmus/MR-RATE) and [Dataset Guide](docs/dataset_guide.md).
 
-1. **Follow [⚙️ Installation](#%EF%B8%8F-installation) steps 1 & 3 (if you haven't done so already)**
+1. **Follow [Installation](#installation) steps 1 & 3 (if you haven't done so already)**
 
     All four repositories are gated. Make sure you have access.
 
@@ -433,7 +433,7 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
 
     | Flag | Default | Repository | Zip suffix | Output directory |
     |------|---------|-----------|------------|-----------------|
-    | `--native` | on | `Forithmus/MR-RATE` | — | `./data/MR-RATE/` |
+    | `--native` | on | `Forithmus/MR-RATE` | - | `./data/MR-RATE/` |
     | `--coreg` | off | `Forithmus/MR-RATE-coreg` | `_coreg` | `./data/MR-RATE-coreg/` |
     | `--atlas` | off | `Forithmus/MR-RATE-atlas` | `_atlas` | `./data/MR-RATE-atlas/` |
     | `--nvseg` | off | `Forithmus/MR-RATE-nvseg-ctmr` | `_nvseg-ctmr` | `./data/MR-RATE-nvseg-ctmr/` |
@@ -615,6 +615,6 @@ For detailed overview, refer to the [MR-RATE dataset](https://huggingface.co/dat
     # Find the report for a study
     study_report = reports[reports["study_uid"] == "<study_uid>"]
 
-    # Find the center modality series for a study (used in coreg/atlas/segmentation)
+    # Find the center modality series for a study (used in coreg/atlas/nvseg)
     center = meta[(meta["study_uid"] == "<study_uid>") & (meta["is_center_modality"] == True)]
     ```

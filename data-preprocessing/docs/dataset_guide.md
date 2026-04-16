@@ -13,6 +13,7 @@ A practical reference for understanding the structure and contents of the [MR-RA
   - [What is a series ID?](#what-is-a-series-id)
   - [What modalities and series are included?](#what-modalities-and-series-are-included)
   - [Which series are contrast-enhanced?](#which-series-are-contrast-enhanced)
+  - [How is the center modality selected?](#how-is-the-center-modality-selected)
   - [Why are there registration and segmentation derivatives along with native-space data?](#why-are-there-registration-and-segmentation-derivatives-along-with-native-space-data)
   - [Why are files zipped?](#why-are-files-zipped)
   - [Why are there four repositories?](#why-are-there-four-repositories)
@@ -20,10 +21,10 @@ A practical reference for understanding the structure and contents of the [MR-RA
   - [What are batches?](#what-are-batches)
   - [How does metadata connect everything?](#how-does-metadata-connect-everything)
 - [2. Repository Overview](#2-repository-overview)
-- [3. Forithmus/MR-RATE — Native Space](#3-forithmusmr-rate--native-space)
-- [4. Forithmus/MR-RATE-coreg — Co-registered Space](#4-forithmusmr-rate-coreg--co-registered-space)
-- [5. Forithmus/MR-RATE-atlas — Atlas Space](#5-forithmusmr-rate-atlas--atlas-space)
-- [6. Forithmus/MR-RATE-nvseg-ctmr — Segmentations](#6-forithmusmr-rate-nvseg-ctmr--segmentations)
+- [3. Forithmus/MR-RATE - Native Space](#3-forithmusmr-rate---native-space)
+- [4. Forithmus/MR-RATE-coreg - Co-registration Space](#4-forithmusmr-rate-coreg---co-registration-space)
+- [5. Forithmus/MR-RATE-atlas - Atlas-registration Space](#5-forithmusmr-rate-atlas---atlas-registration-space)
+- [6. Forithmus/MR-RATE-nvseg-ctmr - Multi-Label Segmentations](#6-forithmusmr-rate-nvseg-ctmr---multi-label-segmentations)
 - [7. Downloading Dataset](#7-downloading-dataset)
 - [8. Connecting the Pieces](#8-connecting-the-pieces)
 
@@ -35,7 +36,7 @@ A practical reference for understanding the structure and contents of the [MR-RA
 
 MR-RATE is a large-scale multimodal dataset comprising **705,254** non-contrast and contrast-enhanced brain and spine MRI volumes from **83,425** unique patients across **98,334** studies, spanning multiple sequence types (T1, T2, FLAIR, SWI, MRA) and paired with radiology reports and metadata, together constituting a unified resource for multimodal brain and spine MRI research. 
 
-Raw DICOM files are converted to anonymized, defaced NIfTI volumes, spatially standardized via co-registration and atlas normalization, and enriched with multi-label brain and body segmentations. Reports are anonymized, translated, and restructured. All processing is carried out through open-source workflows, with the goal of transforming raw, heterogeneous clinical data into a clean, anonymized, and spatially standardized collection ready for downstream machine learning and neuroscientific research.
+Raw DICOM files are converted to anonymized, defaced NIfTI volumes, spatially standardized via co-registration and atlas-registration, and enriched with multi-label brain and body segmentations. Reports are anonymized, translated, and restructured. All processing is carried out through open-source workflows, with the goal of transforming raw, heterogeneous clinical data into a clean, anonymized, and spatially standardized collection ready for downstream machine learning and neuroscientific research.
 
 ---
 
@@ -43,11 +44,11 @@ Raw DICOM files are converted to anonymized, defaced NIfTI volumes, spatially st
 
 The reference for our preprocessing pipeline is the [BrainLesion Suite Preprocessing Module (BrainLes-Preprocessing Toolkit)](https://github.com/BrainLesion/preprocessing) which, among many other options, provides [ANTs](https://github.com/antsx/ants) for registration, [HD-BET](https://github.com/MIC-DKFZ/HD-BET) for binary brain mask segmentation and [Quickshear](https://github.com/nipy/quickshear) for defacing. We adapted `BrainLes-Preprocessing` substantially for our large-scale data preprocessing:
 
-- **Improved CPU & GPU Utilization** — `BrainLes-Preprocessing` is designed to run all preprocessing steps (registration, brain segmentation, and defacing) for a given study sequentially in one pass. In this pipeline, GPU-based steps (`HD-BET` brain segmentation) and CPU-based steps (`ANTs` registration) alternate, leaving one resource idle while the other runs. Given the GPU-hours required for our dataset, we split the pipeline into two independent blocks, 1)registration and 2)brain segmentation & defacing, so that each block can be optimized and scaled separately.
+- **Improved CPU & GPU Utilization**: `BrainLes-Preprocessing` is designed to run all preprocessing steps (registration, brain segmentation, and defacing) for a given study sequentially in one pass. In this pipeline, GPU-based steps (`HD-BET` brain segmentation) and CPU-based steps (`ANTs` registration) alternate, leaving one resource idle while the other runs. Given the GPU-hours required for our dataset, we split the pipeline into two independent blocks, 1)registration and 2)brain segmentation & defacing, so that each block can be optimized and scaled separately.
 
-- **Parallelism & Inference Optimization** — Within each block, we parallelized study processing to utilize all available CPU cores and GPUs respectively. Furthermore, we optimized `HD-BET` inference for mixed-precision and batch inference to leverage modern GPU resources.
+- **Parallelism & Inference Optimization**: Within each block, we parallelized study processing to utilize all available CPU cores and GPUs respectively. Furthermore, we optimized `HD-BET` inference for mixed-precision and batch inference to leverage modern GPU resources.
 
-- **Block Re-ordering** — In a typical setup as in `BrainLes-Preprocessing`, registration comes first. Then other steps are applied to the center modality, and produced brain and defacing masks are mapped back to the moving modalities. We inverted this order for a practical reason: at the time of the project, our data storage cluster had high GPU availability but relatively low CPU availability. Running brain segmentation and defacing on all series independently allowed us to complete the anonymization step quickly, after which the defaced data was transferred to a separate compute cluster where the registration block was run. As a byproduct of this re-ordering, brain masks are not bounded by the registration performance and are of comparable or higher quality.
+- **Block Re-ordering**: In a typical setup as in `BrainLes-Preprocessing`, registration comes first. Then other steps are applied to the center modality, and produced brain and defacing masks are mapped back to the moving modalities. We inverted this order for a practical reason: at the time of the project, our data storage cluster had high GPU availability but relatively low CPU availability. Running brain segmentation and defacing on all series independently allowed us to complete the anonymization step quickly, after which the defaced data was transferred to a separate compute cluster where the registration block was run. As a byproduct of this re-ordering, brain masks are not bounded by the registration performance and are of comparable or higher quality.
 
 ---
 
@@ -55,11 +56,11 @@ The reference for our preprocessing pipeline is the [BrainLesion Suite Preproces
 
 MR-RATE is organized around the three-level clinical hierarchy that mirrors how MRI data is structured in a hospital.
 
-**Patient** — a unique individual, identified by a de-identified `patient_uid`. A patient may have undergone multiple MRI exams over time.
+**Patient**: a unique individual, identified by a de-identified `patient_uid`. A patient may have undergone multiple MRI exams over time.
 
-**Study** — a single imaging appointment (also called an examination). During a study, the patient is scanned with multiple pulse sequences, each producing a separate volume. A study is identified by a de-identified `study_uid` and is accompanied by a radiology report.
+**Study**: a single imaging appointment (also called an examination). During a study, the patient is scanned with multiple pulse sequences, each producing a separate volume. A study is identified by a de-identified `study_uid` and is accompanied by a radiology report.
 
-**Series** — a single MRI acquisition within a study (e.g., an axial T1-weighted scan). Each series produces one NIfTI volume and is identified by a `series_id`.
+**Series**: a single MRI acquisition within a study (e.g., an axial T1-weighted scan). Each series produces one NIfTI volume and is identified by a `series_id`.
 
 ---
 
@@ -108,6 +109,12 @@ Series are accepted only when they meet all of the following criteria:
 ### Which series are contrast-enhanced?
 
 **T1-weighted** acquisitions in MR-RATE can be either non-contrast or contrast-enhanced (gadolinium-based). The metadata does not currently include a contrast-enhancement label. As a practical heuristic, series with a lower `SeriesNumber` within a study were acquired earlier and are more likely to be non-contrast, since the contrast agent is typically injected partway through the exam.
+
+---
+
+### How is the center modality selected?
+
+Within each study, a T1-weighted MRI volume is selected as the *center modality* and all other volumes acquired in the same study are referred to as *moving modalities*. The center vs moving information is used while producing registration and segmentation derivatives. Series that pass the general acceptance criteria (shape, field of view, sequence type, and others listed above) are sorted by `SeriesNumber`, which reflects acquisition order within a study, and the earliest T1w series (lowest `SeriesNumber`) is designated the center modality.
 
 ---
 
@@ -167,14 +174,14 @@ series_id    →  maps a metadata row to its NIfTI filename
 | Repository                                                                                     | Size    | Contents                                                                                                                        |
 | ---------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **[Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE)**                     | 8.1 TB  | Native-space defaced MRI volumes, brain masks, defacing masks, metadata CSVs, radiology report CSVs, pathology label CSV, data splits |
-| **[Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg)**         | 17.6 TB | MRI volumes co-registered to the study's T1w center modality, registration transforms, center modality brain and defacing masks |
-| **[Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas)**         | 12.3 TB | MRI volumes in MNI152 atlas space, atlas registration transforms, center modality brain and defacing masks in atlas-space       |
+| **[Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg)**         | 17.6 TB | MRI volumes registered to the study's T1w center modality, co-registration transforms, center modality brain and defacing masks |
+| **[Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas)**         | 12.3 TB | MRI volumes registered the the MNI152 atlas, atlas-registration transforms, center modality brain and defacing masks in atlas-space       |
 | **[Forithmus/MR-RATE-nvseg-ctmr](https://huggingface.co/datasets/Forithmus/MR-RATE-nvseg-ctmr)** | 415 GB   | Brain segmentations for center modality volumes and whole-body segmentations for all modalities, in native-space        |
 
 
 ---
 
-## 3. Forithmus/MR-RATE — Native Space
+## 3. Forithmus/MR-RATE - Native Space
 
 This is the primary repository. It contains the native-space MRI volumes, the full metadata tables, radiology reports, and data splits. All other repositories are derivatives keyed on the same `study_uid`.
 
@@ -212,7 +219,7 @@ Each zip contains one study folder:
     └── <study_uid>_<series_id>_defacing-mask.nii.gz # Defacing mask (uint8)
 ```
 
-Every series has three files — image, brain mask, and defacing mask — all in the same voxel space. Brain masks are predicted with [HD-BET](https://github.com/MIC-DKFZ/HD-BET) and defacing is applied with [Quickshear](https://github.com/nipy/quickshear). Both masks are released alongside the defaced volumes so they can be reused directly in downstream processing without rerunning inference.
+Every series has three files: image, brain mask, and defacing mask, all in the same voxel space. Brain masks are predicted with [HD-BET](https://github.com/MIC-DKFZ/HD-BET) and defacing is applied with [Quickshear](https://github.com/nipy/quickshear). Both masks are released alongside the defaced volumes so they can be reused directly in downstream processing without rerunning inference.
 
 See [MRI & Metadata Preprocessing](../README.md#mri--metadata-preprocessing) for the full implementation details.
 
@@ -281,7 +288,7 @@ Each radiology report was originally written in Turkish by a radiologist. It was
 | `impression`           | Radiologist's conclusions.                                                                   |
 
 
-Anonymization tokens — `[patient_1]`, `[date_1]`, `[radiologist_1]`, `[hospital_1]`, etc. — are present in the text wherever PHI was replaced during anonymization.
+Anonymization tokens (`[patient_1]`, `[date_1]`, `[radiologist_1]`, `[hospital_1]`, etc.) are present in the text wherever PHI was replaced during anonymization.
 
 See [Radiology Report Preprocessing](../README.md#radiology-report-preprocessing) for the full implementation details.
 
@@ -314,7 +321,7 @@ Binary (0/1) presence labels for 37 SNOMED CT-grounded brain and spine MRI patho
 
 ---
 
-## 4. Forithmus/MR-RATE-coreg — Co-registered Space
+## 4. Forithmus/MR-RATE-coreg - Co-registration Space
 
 Within each study, all MRI volumes are spatially aligned to a shared reference frame. A single T1w raw series is designated the **center modality** (marked `is_center_modality=True` in the metadata). All other series in the study, the **moving modalities**, are registered to the center using [ANTs](https://github.com/antsx/ants), bringing every MRI sequence of a study into a common anatomical space for within-study cross-modal analysis. The following registration parameters are used: `Rigid` transform, `linear` interpolation, and `Mattes` (Mattes mutual information) metric.
 
@@ -349,7 +356,7 @@ See [Registration](../README.md#registration) for the full implementation detail
 
 ---
 
-## 5. Forithmus/MR-RATE-atlas — Atlas Space
+## 5. Forithmus/MR-RATE-atlas - Atlas-registration Space
 
 The center modality from each study is registered to the [MNI152 ICBM 2009c Nonlinear Symmetric](https://nist.mni.mcgill.ca/icbm-152-nonlinear-atlases-2009/) atlas using [ANTs](https://github.com/antsx/ants). All co-registered moving modalities are then propagated to atlas space using the composed transform, putting every volume in the study into a standardized coordinate system for group-level analyses and cross-patient comparisons. The following registration parameters are used: `Rigid` transform, `linear` interpolation, and `Mattes` (Mattes mutual information) metric.
 
@@ -384,9 +391,9 @@ See [Registration](../README.md#registration) for the full implementation detail
 
 ---
 
-## 6. Forithmus/MR-RATE-nvseg-ctmr — Segmentations
+## 6. Forithmus/MR-RATE-nvseg-ctmr - Multi-Label Segmentations
 
-Voxel-wise multi-label segmentations are predicted for each study in native-space using [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR) model. Two segmentation types are produced per study: brain segmentations for the center modality volume (`MR_BRAIN`), and whole-body segmentations for all modalities including the center (`MR_BODY`). Segmentations support region-of-interest analysis and other downstream tasks requiring anatomical parcellations.
+Voxel-wise anatomical multi-label segmentations are predicted for each study in native-space using [NV-Segment-CTMR](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR/tree/main/NV-Segment-CTMR#model-overview) model. Two segmentation types are produced per study: brain segmentations for the center modality volume (`MR_BRAIN`), and whole-body segmentations for all modalities including the center (`MR_BODY`). Segmentations support region-of-interest analysis and other downstream tasks requiring anatomical parcellations.
 
 ### Repository layout on Hugging Face
 
@@ -410,7 +417,7 @@ Forithmus/MR-RATE-nvseg-ctmr
 
 All segmentations are in the same native-space and voxel grid as their corresponding images in `MR-RATE/mri/batchXX/<study_uid>/img/`. Segmentation labels follow the [NV-Segment-CTMR label dictionary](https://github.com/NVIDIA-Medtech/NV-Segment-CTMR/blob/main/NV-Segment-CTMR/configs/label_dict.json).
 
-See [Multi-label Brain and Body Segmentation](../README.md#multi-label-brain-and-body-segmentation) for the full implementation details.
+See [Multi-label Segmentation](../README.md#multi-label-segmentation) for the full implementation details.
 
 ---
 
