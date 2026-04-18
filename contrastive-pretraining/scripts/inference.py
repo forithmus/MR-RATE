@@ -100,6 +100,7 @@ class MrRateInference(nn.Module):
         results_folder='./inference_results',
         fusion_mode="late",
         pooling_strategy="simple_attn",
+        space="native_space",
         normalizer="zscore",
         normalizer_kwargs=None,
         labels_file=None,
@@ -130,6 +131,7 @@ class MrRateInference(nn.Module):
         self.ds = MRReportDatasetInfer(
             data_folder=data_folder,
             jsonl_file=jsonl_file,
+            space=space,
             normalizer=normalizer,
             normalizer_kwargs=normalizer_kwargs,
             labels_file=labels_file,
@@ -408,6 +410,9 @@ if __name__ == "__main__":
                         choices=['train', 'val', 'test'])
     parser.add_argument('--normalizer', type=str, default='zscore',
                         choices=['zscore', 'percentile', 'minmax'])
+    parser.add_argument('--space', type=str, default='native_space',
+                        choices=['native_space', 'atlas_space', 'coreg_space'],
+                        help='Which <space>/img/ subfolder to load (must match training)')
 
     # Pathologies definition
     parser.add_argument('--pathologies_file', type=str, required=True,
@@ -474,6 +479,7 @@ if __name__ == "__main__":
         results_folder=args.results_folder,
         fusion_mode=args.fusion_mode,
         pooling_strategy=args.pooling_strategy,
+        space=args.space,
         normalizer=args.normalizer,
         labels_file=args.labels_file,
         splits_csv=args.splits_csv,
