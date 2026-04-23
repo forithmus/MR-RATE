@@ -21,7 +21,8 @@ data-preprocessing/
 │   ├── interim/                           # Intermediate outputs from each step
 │   └── processed/                         # Final processed studies
 ├── docs/
-│   └── dataset_guide.md                   # Dataset guide
+│   ├── dataset_guide.md                   # Dataset guide
+│   └── backfilled_reg_studies.md          # Backfilled registration studies guide
 ├── logs/                                  # Per-batch log files
 ├── run/
 │   ├── run_mri_preprocessing.py           # Orchestrates steps 1–5
@@ -32,6 +33,8 @@ data-preprocessing/
 ├── scripts/
 │   └── hf/
 │       ├── download.py                    # Download MR-RATE batches from Hugging Face
+│       ├── download_backfilled_reg_studies.py  # Download backfilled registration studies from Hugging Face
+│       ├── backfilled_reg_study_ids.json  # Study IDs for backfilled registration studies
 │       └── merge_downloaded_repos.py      # Merge derivative repos into MR-RATE repo on study level
 ├── src/
 │   └── mr_rate_preprocessing/
