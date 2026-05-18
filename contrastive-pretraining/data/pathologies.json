@@ -1,13 +1,5 @@
 {
   "pathologies": {
-    "Cerebral infarction": {
-      "positive": "There is infarct",
-      "negative": "There is no infarct"
-    },
-    "Cerebral hemorrhage": {
-      "positive": "There is cerebral hemorrhage",
-      "negative": "There is no cerebral hemorrhage"
-    },
     "Metastatic malignant neoplasm to brain": {
       "positive": "There is metastasis",
       "negative": "There is no metastasis"
@@ -96,17 +88,9 @@
       "positive": "There is spinal canal stenosis",
       "negative": "There is no spinal canal stenosis"
     },
-    "Mastoiditis": {
-      "positive": "There is mastoiditis",
-      "negative": "There is no mastoiditis"
-    },
     "Chronic mastoiditis": {
       "positive": "There is chronic mastoiditis",
       "negative": "There is no chronic mastoiditis"
-    },
-    "Ventriculomegaly": {
-      "positive": "There is ventriculomegaly",
-      "negative": "There is no ventriculomegaly"
     },
     "Cerebellar degeneration": {
       "positive": "There is cerebellar atrophy",
@@ -135,10 +119,6 @@
     "Foraminal Spinal Stenosis": {
       "positive": "There is foraminal stenosis",
       "negative": "There is no foraminal stenosis"
-    },
-    "Lipoma of brain": {
-      "positive": "There is lipoma",
-      "negative": "There is no lipoma"
     },
     "Glioma": {
       "positive": "There is glioma",
