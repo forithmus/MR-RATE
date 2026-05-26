@@ -146,20 +146,31 @@ data_folder/
 ```
 
 **Layout 2 — Batch-based** (HuggingFace dataset format):
+
+The image subdirectory name is chosen automatically from `--space`:
+
+| Space (`--space`) | Image subfolder | HuggingFace repo |
+|-------------------|-----------------|------------------|
+| `native_space` *(default)* | `img/` | [Forithmus/MR-RATE](https://huggingface.co/datasets/Forithmus/MR-RATE) |
+| `coreg_space` | `coreg_img/` | [Forithmus/MR-RATE-coreg](https://huggingface.co/datasets/Forithmus/MR-RATE-coreg) |
+| `atlas_space` | `atlas_img/` | [Forithmus/MR-RATE-atlas](https://huggingface.co/datasets/Forithmus/MR-RATE-atlas) |
+
 ```
-data_folder/
+data_folder/                       # e.g. ./data/MR-RATE-coreg/mri
 ├── batch00/
 │   ├── SUBJECT_001/
-│   │   └── img/
+│   │   └── coreg_img/             # img/ for native, atlas_img/ for atlas
 │   │       ├── SUBJECT_001_t1w-raw-axi.nii.gz
 │   │       ├── SUBJECT_001_flair-raw-axi.nii.gz
 │   │       └── ...
 │   ├── SUBJECT_002/
-│   │   └── img/
+│   │   └── coreg_img/
 │   │       └── ...
 ├── batch01/
 │   └── ...
 ```
+
+After `merge_downloaded_repos.py` consolidates native + coreg + atlas under a single tree, all three subfolders (`img/`, `coreg_img/`, `atlas_img/`) live side-by-side under each study, and `--space` selects which one to load.
 
 Reports are stored in a JSONL file with one entry per subject:
 
@@ -230,8 +241,11 @@ FUSION_MODE=late_attn POOLING_STRATEGY=cross_attn NUM_TRAIN_STEPS=50000 \
 | `--pooling_strategy` | `simple_attn`, `cross_attn`, `gated` | `simple_attn` | Volume pooling (used with `late_attn`) |
 | `--data_folder` | — | required | Path to MR data folder |
 | `--jsonl_file` | — | required | Path to reports JSONL file |
-| `--space` | — | `native_space` | Image space subfolder (only for space-based layout) |
+| `--space` | `native_space`, `coreg_space`, `atlas_space` | `native_space` | Selects the image subfolder under each study: `<space>/img/` (layout 1) or `img/` / `coreg_img/` / `atlas_img/` (layout 2) |
 | `--normalizer` | `zscore`, `percentile`, `minmax` | `zscore` | Volume normalization method |
+| `--pathology_labels_csv` | — | — | Path to pathology labels CSV (e.g. `mrrate_labels.csv`). Required for rebalancing. |
+| `--rebalance_strategy` | `inverse_freq`, `sqrt_inverse_freq`, `max_inverse_freq` | — (uniform) | Per-subject sampling weight strategy for upsampling rare pathologies. |
+| `--rebalance_base_weight` | — | `1.0` | Base sampling weight for all-negative / unlabeled subjects. |
 | `--num_train_steps` | — | `100001` | Total training steps |
 | `--lr` | — | `1e-5` | Learning rate |
 | `--results_folder` | — | `./mr_rate_results` | Checkpoint output directory |
@@ -249,6 +263,61 @@ FUSION_MODE=late_attn POOLING_STRATEGY=cross_attn NUM_TRAIN_STEPS=50000 \
 - **W&B integration**: `--wandb` logs loss, learning rate, volume count per step; run ID is persisted for seamless resume across SLURM jobs
 - **Gradient checkpointing**: Nested checkpointing at both volume level (in MRRATE) and chunk level (in sliding encoders) for maximum memory efficiency
 - **Dual checkpoints**: Saves both model-only `.pt` (for inference) and full `.pt` (model + optimizer + scheduler + step, for resume)
+- **Rare-pathology rebalancing** (see below): inverse-prevalence weighted sampling so contrastive batches see uncommon pathologies more often
+
+### Rare-Pathology Rebalancing
+
+Pathology prevalence in MR-RATE is heavily skewed (~43% of studies are all-negative; the rarest pathology, *Hemangioma of vertebral column*, occurs in ~0.23% of studies; *Gliosis* in ~37%). Under uniform sampling, contrastive batches are dominated by common findings and the model rarely sees rare ones. Passing `--pathology_labels_csv` together with `--rebalance_strategy` switches the training DataLoader to a `WeightedRandomSampler` whose per-subject weights are derived from inverse prevalence.
+
+#### How the weighting works
+
+Each subject's report is **multi-label** — a single scan can have zero, one, or many positive pathologies. Every subject is reduced to a single sampling weight `w_i`. Bigger weight = drawn more often. The three strategies differ in how a subject's binary label vector is collapsed into that one number.
+
+Concrete walk-through with two pathologies and three subjects (using real prevalences from `mrrate_labels.csv`: *Hemangioma of vertebral column* ≈ 0.23% → inv-freq ≈ 433; *Gliosis* ≈ 37% → inv-freq ≈ 2.7):
+
+| Subject | Hemangioma (rare) | Gliosis (common) | `inverse_freq` weight |
+|---------|-------------------|------------------|-----------------------|
+| A       | 1                 | 1                | `1 + 433 + 2.7 ≈ 436.7` |
+| B       | 0                 | 1                | `1 +   0 + 2.7 ≈ 3.7`   |
+| C       | 0                 | 0                | `1` (base)              |
+
+Subject A is drawn ~436× more often than C, and ~118× more often than B.
+
+#### Strategy choice
+
+For each pathology `p`, `prevalence[p]` is the positive rate across labeled subjects in the active split, and `inv_freq[p] = 1 / max(prevalence[p], eps)`. The three strategies are different ways to aggregate across a subject's positive labels:
+
+| Strategy | Formula | Subject A's weight | Behavior |
+|----------|---------|--------------------|----------|
+| `inverse_freq` | `base + Σ_p y_p · inv_freq[p]` | `436.7` | **Sum** — rewards multiple co-occurring rare findings. On `mrrate_labels.csv`, rarest pathology mass: 0.23% → ~4.0% (~17× boost). |
+| `sqrt_inverse_freq` | `base + Σ_p y_p · √inv_freq[p]` | `22.4` | Sum with diminishing returns. Rarest pathology mass: 0.23% → ~1.5%. Use when `inverse_freq` over-amplifies. |
+| `max_inverse_freq` | `max(base, max_p y_p · inv_freq[p])` | `433` | **Max** — a subject's weight is set by its single rarest positive pathology. Doesn't matter if they have one rare finding or five — caps combinatorial blow-up. |
+
+Recommendation: start with `inverse_freq`. Switch to `sqrt_inverse_freq` if training loss gets noisy from over-sampling the same handful of rare subjects.
+
+Subjects missing from the labels CSV — and all-negative subjects — receive `--rebalance_base_weight` (default `1.0`), so they remain in the pool but do not dominate it.
+
+#### Enabling it
+
+Add two flags to your existing training command:
+
+```bash
+accelerate launch --multi_gpu --num_processes 4 scripts/run_train.py \
+    --encoder vjepa2 --fusion_mode late \
+    --data_folder /path/to/data \
+    --jsonl_file  /path/to/reports.jsonl \
+    --pathology_labels_csv /path/to/mrrate_labels.csv \
+    --rebalance_strategy inverse_freq
+```
+
+Without those flags, nothing changes — uniform `shuffle=True` as before. With them, the dataset prints a one-line summary at startup so you can verify the math:
+
+```
+[MRReportDataset] Rebalancing enabled (strategy=inverse_freq): 97896/97896 subjects matched labels CSV, weight range=[1.0, 1418.9], mean=33.0
+[Trainer] Using WeightedRandomSampler (strategy=inverse_freq)
+```
+
+Total compute is unchanged (still `--num_train_steps` steps × batch_size × num_processes draws). Rebalancing only **redistributes** that draw budget toward rare-pathology subjects via `WeightedRandomSampler(..., replacement=True)`.
 
 ### Training Configuration
 

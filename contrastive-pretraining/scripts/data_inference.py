@@ -29,7 +29,7 @@ import torch.nn.functional as F
 import nibabel as nib
 from torch.utils.data import Dataset
 
-from data import NORMALIZERS, resize_array
+from data import NORMALIZERS, SPACE_TO_IMG_SUBDIR, resize_array
 
 
 class MRReportDatasetInfer(Dataset):
@@ -128,7 +128,8 @@ class MRReportDatasetInfer(Dataset):
 
         Supports two directory layouts (same auto-detection as training):
           1) data_folder/<study_uid>/<space>/img/*.nii.gz
-          2) data_folder/batchXX/<study_uid>/img/*.nii.gz
+          2) data_folder/batchXX/<study_uid>/<img_subdir>/*.nii.gz
+             (img_subdir is space-dependent: img/, coreg_img/, atlas_img/)
         """
         samples = []
 
@@ -147,10 +148,11 @@ class MRReportDatasetInfer(Dataset):
                 img_dir = os.path.join(data_folder, study_uid, self.space, 'img')
                 self._add_subject(samples, study_uid, img_dir)
         else:
+            img_subdir = SPACE_TO_IMG_SUBDIR.get(self.space, 'img')
             for batch_dir in first_level_dirs:
                 batch_path = os.path.join(data_folder, batch_dir)
                 for study_uid in sorted(os.listdir(batch_path)):
-                    img_dir = os.path.join(batch_path, study_uid, 'img')
+                    img_dir = os.path.join(batch_path, study_uid, img_subdir)
                     self._add_subject(samples, study_uid, img_dir)
 
         return samples

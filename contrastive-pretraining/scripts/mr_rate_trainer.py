@@ -139,6 +139,11 @@ class MrRateTrainer(nn.Module):
             normalizer="zscore",
             normalizer_kwargs=None,
 
+            # Rare-pathology rebalancing (inverse-prevalence weighted sampling)
+            pathology_labels_csv=None,
+            rebalance_strategy=None,
+            rebalance_base_weight=1.0,
+
             # Common dataset parameters
             max_sentences_per_image=34,
 
@@ -220,6 +225,9 @@ class MrRateTrainer(nn.Module):
             normalizer_kwargs=normalizer_kwargs,
             splits_csv=splits_csv,
             split=split,
+            pathology_labels_csv=pathology_labels_csv,
+            rebalance_strategy=rebalance_strategy,
+            rebalance_base_weight=rebalance_base_weight,
         )
 
         self.print(f"[Trainer] Dataset initialized with {len(self.ds)} subjects")
@@ -230,11 +238,26 @@ class MrRateTrainer(nn.Module):
         self.print(f"[Trainer] All ranks synchronized after dataset init")
 
         # Initialize dataloader
+        # If rebalancing is enabled, use WeightedRandomSampler (with replacement)
+        # so rare-pathology subjects are drawn more often. Otherwise default
+        # shuffle.
+        if self.ds.sample_weights is not None:
+            sampler = self.ds.get_weighted_sampler()
+            shuffle = False
+            self.print(
+                f"[Trainer] Using WeightedRandomSampler "
+                f"(strategy={self.ds.rebalance_strategy})"
+            )
+        else:
+            sampler = None
+            shuffle = True
+
         self.dl = DataLoader(
             self.ds,
             num_workers=num_workers,
             batch_size=self.batch_size,
-            shuffle=True,
+            sampler=sampler,
+            shuffle=shuffle,
             drop_last=True,
             collate_fn=collate_fn,
             prefetch_factor=2 if num_workers > 0 else None,

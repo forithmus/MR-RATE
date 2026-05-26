@@ -46,6 +46,17 @@ parser.add_argument('--space', type=str, default='native_space',
 parser.add_argument('--normalizer', type=str, default='zscore',
                     choices=['zscore', 'percentile', 'minmax'],
                     help='Volume normalization method (default: zscore)')
+parser.add_argument('--pathology_labels_csv', type=str, default=None,
+                    help='Path to pathology labels CSV used to oversample rare-pathology '
+                         'subjects (e.g. mrrate_labels.csv). First column must be '
+                         'study_uid; remaining columns are binary pathology labels.')
+parser.add_argument('--rebalance_strategy', type=str, default=None,
+                    choices=['inverse_freq', 'sqrt_inverse_freq', 'max_inverse_freq'],
+                    help='Per-subject sampling weight strategy. None (default) = uniform '
+                         'shuffle. Requires --pathology_labels_csv.')
+parser.add_argument('--rebalance_base_weight', type=float, default=1.0,
+                    help='Base sampling weight for all-negative / unlabeled subjects '
+                         '(default: 1.0). Rare-positive subjects get base + inv-freq.')
 parser.add_argument('--resume', action='store_true',
                     help='Resume training from latest checkpoint in results_folder')
 parser.add_argument('--wandb', action='store_true',
@@ -186,6 +197,8 @@ wandb_config = {
     'normalizer': args.normalizer,
     'lr': args.lr,
     'num_train_steps': args.num_train_steps,
+    'rebalance_strategy': args.rebalance_strategy,
+    'rebalance_base_weight': args.rebalance_base_weight,
 }
 
 trainer = MrRateTrainer(
@@ -202,6 +215,9 @@ trainer = MrRateTrainer(
     save_model_every=500,
     results_folder=args.results_folder,
     normalizer=args.normalizer,
+    pathology_labels_csv=args.pathology_labels_csv,
+    rebalance_strategy=args.rebalance_strategy,
+    rebalance_base_weight=args.rebalance_base_weight,
     resume=args.resume,
     use_wandb=args.wandb,
     wandb_project=args.wandb_project,
