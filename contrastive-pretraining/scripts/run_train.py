@@ -26,10 +26,21 @@ parser.add_argument('--fusion_mode', type=str, default='late',
                     choices=['early', 'mid_cnn', 'late', 'late_attn'])
 parser.add_argument('--pooling_strategy', type=str, default='simple_attn',
                     choices=['simple_attn', 'cross_attn', 'gated'])
-parser.add_argument('--data_folder', type=str, required=True,
-                    help='Path to MR data folder containing subject directories')
+parser.add_argument('--data_folder', type=str, default=None,
+                    help='Path to MR data folder containing subject directories. '
+                         'Required unless --use_preprocessed is set.')
 parser.add_argument('--jsonl_file', type=str, required=True,
                     help='Path to reports JSONL file')
+parser.add_argument('--preprocessed_dir', type=str, default=None,
+                    help='Root of precomputed .npz volumes (from preprocess_volumes.py). '
+                         'Files are read from <preprocessed_dir>/<space>/<study_uid>.npz.')
+parser.add_argument('--use_preprocessed', action='store_true',
+                    help='Read preprocessed .npz instead of raw NIfTI (much faster '
+                         'disk I/O for large coreg/atlas volumes). Requires '
+                         '--preprocessed_dir built with matching preprocessing args.')
+parser.add_argument('--cache_allow_mismatch', action='store_true',
+                    help='Downgrade a cache-manifest config mismatch from an error '
+                         'to a warning (advanced; you accept the inconsistency).')
 parser.add_argument('--results_folder', type=str, default='./mr_rate_results')
 parser.add_argument('--num_train_steps', type=int, default=100001)
 parser.add_argument('--lr', type=float, default=1e-5)
@@ -67,6 +78,13 @@ parser.add_argument('--wandb_run_name', type=str, default=None,
                     help='W&B run name (default: auto-generated)')
 args = parser.parse_args()
 
+# Validate data source: either raw NIfTI (--data_folder) or a precomputed cache.
+if args.use_preprocessed:
+    if not args.preprocessed_dir:
+        parser.error("--use_preprocessed requires --preprocessed_dir")
+elif not args.data_folder:
+    parser.error("--data_folder is required unless --use_preprocessed is set")
+
 FUSION_MODE = args.fusion_mode
 POOLING_STRATEGY = args.pooling_strategy
 
@@ -77,6 +95,9 @@ if 'sliding' in args.encoder:
 print(f"Fusion Mode: {FUSION_MODE}")
 print(f"Pooling Strategy: {POOLING_STRATEGY}")
 print(f"Data Folder: {args.data_folder}")
+print(f"Use Preprocessed: {args.use_preprocessed}")
+if args.use_preprocessed:
+    print(f"Preprocessed Dir: {args.preprocessed_dir}")
 print(f"JSONL File: {args.jsonl_file}")
 print(f"Splits CSV: {args.splits_csv}")
 print(f"Split: {args.split}")
@@ -205,6 +226,9 @@ trainer = MrRateTrainer(
     clip,
     data_folder=args.data_folder,
     jsonl_file=args.jsonl_file,
+    preprocessed_dir=args.preprocessed_dir,
+    use_preprocessed=args.use_preprocessed,
+    cache_allow_mismatch=args.cache_allow_mismatch,
     splits_csv=args.splits_csv,
     split=args.split,
     space=args.space,

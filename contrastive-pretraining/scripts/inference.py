@@ -106,6 +106,9 @@ class MrRateInference(nn.Module):
         labels_file=None,
         splits_csv=None,
         split="test",
+        preprocessed_dir=None,
+        use_preprocessed=False,
+        cache_allow_mismatch=False,
         pathologies,
         accelerate_kwargs: dict = dict(),
     ):
@@ -137,6 +140,9 @@ class MrRateInference(nn.Module):
             labels_file=labels_file,
             splits_csv=splits_csv,
             split=split,
+            preprocessed_dir=preprocessed_dir,
+            use_preprocessed=use_preprocessed,
+            cache_allow_mismatch=cache_allow_mismatch,
         )
 
         self.device = self.accelerator.device
@@ -396,12 +402,21 @@ if __name__ == "__main__":
     parser.add_argument('--results_folder', type=str, default='./inference_results')
 
     # Data paths
-    parser.add_argument('--data_folder', type=str, required=True,
-                        help='Path to MR data folder containing subject directories')
+    parser.add_argument('--data_folder', type=str, default=None,
+                        help='Path to MR data folder containing subject directories. '
+                             'Required unless --use_preprocessed is set.')
     parser.add_argument('--jsonl_file', type=str, required=True,
                         help='Path to reports JSONL file')
     parser.add_argument('--labels_file', type=str, required=True,
                         help='Path to labels CSV (study_uid + binary pathology columns)')
+    parser.add_argument('--preprocessed_dir', type=str, default=None,
+                        help='Root of precomputed .npz volumes (preprocess_volumes.py). '
+                             'Read from <preprocessed_dir>/<space>/<study_uid>.npz.')
+    parser.add_argument('--use_preprocessed', action='store_true',
+                        help='Read preprocessed .npz instead of raw NIfTI. Must match '
+                             'the preprocessing used for the training cache.')
+    parser.add_argument('--cache_allow_mismatch', action='store_true',
+                        help='Downgrade a cache-manifest config mismatch to a warning.')
 
     # Splits and normalization
     parser.add_argument('--splits_csv', type=str, default=None,
@@ -419,6 +434,12 @@ if __name__ == "__main__":
                         help='JSON file with pathology definitions and positive/negative prompts')
 
     args = parser.parse_args()
+
+    if args.use_preprocessed:
+        if not args.preprocessed_dir:
+            parser.error("--use_preprocessed requires --preprocessed_dir")
+    elif not args.data_folder:
+        parser.error("--data_folder is required unless --use_preprocessed is set")
 
     # Load pathologies
     pathologies = load_pathologies(args.pathologies_file)
@@ -484,6 +505,9 @@ if __name__ == "__main__":
         labels_file=args.labels_file,
         splits_csv=args.splits_csv,
         split=args.split,
+        preprocessed_dir=args.preprocessed_dir,
+        use_preprocessed=args.use_preprocessed,
+        cache_allow_mismatch=args.cache_allow_mismatch,
         pathologies=pathologies,
     )
 

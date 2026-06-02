@@ -61,6 +61,67 @@ All NIfTI volumes are reoriented to **canonical RAS** (via `nibabel.as_closest_c
 | `percentile` | Clip to [0.5, 99.5] percentile, rescale to [-1,1] |
 | `minmax` | Simple min-max rescale to [-1,1] |
 
+### Offline Preprocessing (.npz cache)
+
+The coregistered/atlas NIfTIs are large (some ~2 GB) and decoding + RAS-reorient +
+resampling them on the fly starves the GPUs. `scripts/preprocess_volumes.py` runs the
+**exact** per-volume pipeline above once, offline, and writes one compact `.npz` per
+subject. Training/inference then read those directly with `--use_preprocessed`, skipping
+the expensive NIfTI read entirely.
+
+The script is independent of any dataloader/training decision: it discovers every subject
+under `--data_folder` (report/split agnostic) and keys the output only by the preprocessing
+config, which is recorded in a manifest that the loader validates.
+
+**Output layout** (consumed by both `MRReportDataset` and `MRReportDatasetInfer`):
+
+```
+<out_dir>/<space>/_manifest.json        # space, spacing, shape, posterior shift, normalizer, dtype
+<out_dir>/<space>/<study_uid>.npz       # volumes: [N, D, H, W]  (all of a subject's volumes, stacked)
+```
+
+The loader casts the cached array to bfloat16 and adds the channel dim → `[N, 1, D, H, W]`,
+**byte-for-byte identical** to the live path (verified in `tests/test_preprocess_cache.py`).
+
+**Step 1 — build the cache** (run once; resumable, shardable across array jobs):
+
+```bash
+python scripts/preprocess_volumes.py \
+    --data_folder /path/to/MR-RATE-coreg/mri \
+    --out_dir     /path/to/preprocessed \
+    --space       coreg_space \
+    --normalizer  zscore \
+    --num_workers 8
+# Shard across N jobs: add --num_shards N --shard_index $SLURM_ARRAY_TASK_ID
+```
+
+The script exposes **every** setting that affects the volume tensor, matching the
+dataloader 1:1: `--space`, `--normalizer`, `--normalizer_kwargs` (JSON, e.g.
+`'{"lower_percentile": 1.0, "upper_percentile": 99.0}'`), `--target_spacing`,
+`--target_shape`, `--posterior_shift_mm`. All are recorded in the manifest and
+checked at load time. Cache-only knobs: `--dtype {float16,float32}` (default
+`float16`, ~2× smaller), `--compress` (smaller files, slower reads — default off
+for fastest training reads). Orchestration: `--overwrite` (reprocess existing),
+`--num_workers`, `--num_shards`/`--shard_index` (split across jobs/nodes), `--limit`.
+
+> The preprocessing config passed here **must** match training (`--space`, `--normalizer`,
+> and the spacing/shape/posterior-shift defaults). The manifest captures it and the
+> dataloader refuses to train on a mismatched cache unless you pass `--cache_allow_mismatch`.
+
+**Step 2 — train/infer from the cache** (drop `--data_folder`, add the two flags):
+
+```bash
+accelerate launch --multi_gpu --num_processes 4 scripts/run_train.py \
+    --encoder vjepa2 --fusion_mode late \
+    --space coreg_space --normalizer zscore \
+    --jsonl_file /path/to/reports.jsonl \
+    --use_preprocessed \
+    --preprocessed_dir /path/to/preprocessed
+```
+
+The same `--use_preprocessed` / `--preprocessed_dir` flags work for `inference.py` and
+`extract_features.py`.
+
 ## Repository Structure
 
 ```
@@ -80,8 +141,9 @@ contrastive-pretraining/
 ├── scripts/                  # Training, inference, and evaluation
 │   ├── run_train.py          # Training entry point (all encoder variants)
 │   ├── mr_rate_trainer.py    # Distributed trainer (accelerate, W&B, resume)
-│   ├── data.py               # MR dataset with variable volumes per subject
-│   ├── data_inference.py     # Inference dataset loader with optional labels
+│   ├── data.py               # MR dataset with variable volumes per subject (live NIfTI or .npz cache)
+│   ├── data_inference.py     # Inference dataset loader with optional labels (live NIfTI or .npz cache)
+│   ├── preprocess_volumes.py # Offline: bake the per-volume pipeline into per-subject .npz (fast disk reads)
 │   ├── inference.py          # Zero-shot brain MRI pathology classification (32 pathologies)
 │   ├── extract_features.py   # Cache frozen encoder features per split (linear-probe step 1)
 │   ├── linear_probe.py       # Train + evaluate a linear classifier on cached features (step 2)
@@ -243,6 +305,9 @@ FUSION_MODE=late_attn POOLING_STRATEGY=cross_attn NUM_TRAIN_STEPS=50000 \
 | `--jsonl_file` | — | required | Path to reports JSONL file |
 | `--space` | `native_space`, `coreg_space`, `atlas_space` | `native_space` | Selects the image subfolder under each study: `<space>/img/` (layout 1) or `img/` / `coreg_img/` / `atlas_img/` (layout 2) |
 | `--normalizer` | `zscore`, `percentile`, `minmax` | `zscore` | Volume normalization method |
+| `--use_preprocessed` | flag | off | Read precomputed `.npz` volumes instead of raw NIfTI (see [Offline Preprocessing](#offline-preprocessing-npz-cache)). Big I/O win for large coreg/atlas volumes. |
+| `--preprocessed_dir` | — | — | Root of the `.npz` cache (from `preprocess_volumes.py`). Required with `--use_preprocessed`. `--data_folder` becomes optional. |
+| `--cache_allow_mismatch` | flag | off | Downgrade a cache-manifest config mismatch from a hard error to a warning. |
 | `--pathology_labels_csv` | — | — | Path to pathology labels CSV (e.g. `mrrate_labels.csv`). Required for rebalancing. |
 | `--rebalance_strategy` | `inverse_freq`, `sqrt_inverse_freq`, `max_inverse_freq` | — (uniform) | Per-subject sampling weight strategy for upsampling rare pathologies. |
 | `--rebalance_base_weight` | — | `1.0` | Base sampling weight for all-negative / unlabeled subjects. |
@@ -431,15 +496,22 @@ Column names must match the pathology labels in `--pathologies_file`. The pre-co
 | `--fusion_mode` | required | Fusion mode used during training |
 | `--pooling_strategy` | `simple_attn` | Pooling strategy used during training |
 | `--weights_path` | required | Path to model checkpoint |
-| `--data_folder` | required | Path to MR data folder |
+| `--data_folder` | required* | Path to MR data folder (*optional if `--use_preprocessed`) |
 | `--jsonl_file` | required | Path to reports JSONL file |
 | `--normalizer` | `zscore` | Volume normalization method |
+| `--use_preprocessed` | off | Read precomputed `.npz` instead of raw NIfTI (see [Offline Preprocessing](#offline-preprocessing-npz-cache)) |
+| `--preprocessed_dir` | — | Root of the `.npz` cache; required with `--use_preprocessed` |
+| `--cache_allow_mismatch` | off | Downgrade a cache-manifest config mismatch to a warning |
 | `--batch_size` | `1` | Inference batch size |
 | `--results_folder` | `./inference_results` | Output directory |
 | `--labels_file` | required | Path to labels CSV (study_uid + binary pathology columns) |
 | `--splits_csv` | — | Path to splits CSV (columns: study_uid, split) |
 | `--split` | `test` | Which split to evaluate |
 | `--pathologies_file` | required | Pathologies JSON with positive/negative prompts (see format above) |
+
+> `extract_features.py` accepts the same `--use_preprocessed` / `--preprocessed_dir` /
+> `--cache_allow_mismatch` flags, so linear-probe feature caching can read from the
+> `.npz` cache too.
 
 ### Outputs
 
@@ -543,6 +615,7 @@ python -m pytest --no-cov
 |------|-------|----------|
 | `test_imports.py` | Dependency + package import verification | All imports |
 | `test_data.py` | Normalizers (zscore, percentile, minmax), collate_fn | Data pipeline |
+| `test_preprocess_cache.py` | discover_subjects, preprocess_volumes.py, live↔cache equivalence, manifest guard | `.npz` cache |
 | `test_pooling.py` | SimpleAttnPool, CrossAttnPool, GatedAttnPool | Shapes, masking, gradients |
 | `test_mr_rate_model.py` | MRRATE model init, forward, loss, serialization | 95% of core model |
 | `test_fusion_modes.py` | All 4 fusion modes x all pooling strategies | End-to-end forward pass |

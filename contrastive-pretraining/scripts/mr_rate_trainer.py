@@ -139,6 +139,11 @@ class MrRateTrainer(nn.Module):
             normalizer="zscore",
             normalizer_kwargs=None,
 
+            # Preprocessed (.npz) cache
+            preprocessed_dir=None,
+            use_preprocessed=False,
+            cache_allow_mismatch=False,
+
             # Rare-pathology rebalancing (inverse-prevalence weighted sampling)
             pathology_labels_csv=None,
             rebalance_strategy=None,
@@ -228,6 +233,9 @@ class MrRateTrainer(nn.Module):
             pathology_labels_csv=pathology_labels_csv,
             rebalance_strategy=rebalance_strategy,
             rebalance_base_weight=rebalance_base_weight,
+            preprocessed_dir=preprocessed_dir,
+            use_preprocessed=use_preprocessed,
+            cache_allow_mismatch=cache_allow_mismatch,
         )
 
         self.print(f"[Trainer] Dataset initialized with {len(self.ds)} subjects")

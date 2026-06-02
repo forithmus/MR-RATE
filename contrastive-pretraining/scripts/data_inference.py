@@ -25,11 +25,13 @@ import csv
 import json
 import numpy as np
 import torch
-import torch.nn.functional as F
-import nibabel as nib
 from torch.utils.data import Dataset
 
-from data import NORMALIZERS, SPACE_TO_IMG_SUBDIR, resize_array
+from data import (
+    NORMALIZERS,
+    discover_subjects, load_and_resample_nii, crop_or_pad,
+    validate_cache_manifest,
+)
 
 
 class MRReportDatasetInfer(Dataset):
@@ -53,20 +55,30 @@ class MRReportDatasetInfer(Dataset):
         labels_file=None,
         splits_csv=None,
         split="test",
+        preprocessed_dir=None,
+        use_preprocessed=False,
+        cache_allow_mismatch=False,
     ):
         self.data_folder = data_folder
         self.space = space
         self.target_spacing = target_spacing
         self.target_shape = target_shape
+        self.posterior_shift_mm = posterior_shift_mm
         self.posterior_shift_voxels = int(round(posterior_shift_mm / target_spacing[2]))
+
+        # Preprocessed (.npz) cache settings (see MRReportDataset / preprocess_volumes.py)
+        self.preprocessed_dir = preprocessed_dir
+        self.use_preprocessed = bool(use_preprocessed)
+        self.cache_allow_mismatch = cache_allow_mismatch
 
         if normalizer not in NORMALIZERS:
             raise ValueError(
                 f"Unknown normalizer '{normalizer}'. "
                 f"Choose from: {list(NORMALIZERS.keys())}"
             )
-        normalizer_kwargs = normalizer_kwargs or {}
-        self.normalizer_obj = NORMALIZERS[normalizer](**normalizer_kwargs)
+        self.normalizer_name = normalizer
+        self.normalizer_kwargs = normalizer_kwargs or {}
+        self.normalizer_obj = NORMALIZERS[normalizer](**self.normalizer_kwargs)
 
         self.split_uids = self._load_splits(splits_csv, split) if splits_csv else None
 
@@ -77,7 +89,14 @@ class MRReportDatasetInfer(Dataset):
         if labels_file is not None:
             self._load_labels(labels_file)
 
-        self.samples = self._prepare_samples(data_folder)
+        if self.use_preprocessed:
+            if not self.preprocessed_dir:
+                raise ValueError("use_preprocessed=True requires preprocessed_dir.")
+            self.samples = self._prepare_samples_from_cache()
+        else:
+            if not data_folder:
+                raise ValueError("data_folder is required when use_preprocessed=False.")
+            self.samples = self._prepare_samples(data_folder)
 
         print(f"[MRReportDatasetInfer] Found {len(self.samples)} subjects "
               f"(space={space}, normalizer={normalizer})")
@@ -124,130 +143,80 @@ class MRReportDatasetInfer(Dataset):
                 )
 
     def _prepare_samples(self, data_folder):
-        """Scan data_folder for NIfTI files.
+        """Scan data_folder for NIfTI files, keeping subjects with reports.
 
-        Supports two directory layouts (same auto-detection as training):
-          1) data_folder/<study_uid>/<space>/img/*.nii.gz
-          2) data_folder/batchXX/<study_uid>/<img_subdir>/*.nii.gz
-             (img_subdir is space-dependent: img/, coreg_img/, atlas_img/)
+        Discovery (layout auto-detection + NIfTI listing) is delegated to the
+        shared discover_subjects() helper so it never drifts from training.
         """
         samples = []
-
-        first_level_dirs = sorted([
-            d for d in os.listdir(data_folder)
-            if os.path.isdir(os.path.join(data_folder, d))
-        ])
-        if not first_level_dirs:
-            return samples
-
-        first_dir = os.path.join(data_folder, first_level_dirs[0])
-        use_space_layout = os.path.isdir(os.path.join(first_dir, self.space))
-
-        if use_space_layout:
-            for study_uid in first_level_dirs:
-                img_dir = os.path.join(data_folder, study_uid, self.space, 'img')
-                self._add_subject(samples, study_uid, img_dir)
-        else:
-            img_subdir = SPACE_TO_IMG_SUBDIR.get(self.space, 'img')
-            for batch_dir in first_level_dirs:
-                batch_path = os.path.join(data_folder, batch_dir)
-                for study_uid in sorted(os.listdir(batch_path)):
-                    img_dir = os.path.join(batch_path, study_uid, img_subdir)
-                    self._add_subject(samples, study_uid, img_dir)
-
+        for sub in discover_subjects(data_folder, self.space):
+            sid = sub['subject_id']
+            if sid not in self.subject_to_sentences:
+                continue
+            sample = {
+                'subject_id': sid,
+                'image_paths': sub['image_paths'],
+                'sentences': self.subject_to_sentences[sid],
+            }
+            if sid in self.subject_to_labels:
+                sample['labels'] = self.subject_to_labels[sid]
+            samples.append(sample)
         return samples
 
-    def _add_subject(self, samples, study_uid, img_dir):
-        """Add a subject if it has matching reports and NIfTI files."""
-        if not os.path.isdir(img_dir):
-            return
-        if study_uid not in self.subject_to_sentences:
-            return
+    def _prepare_samples_from_cache(self):
+        """List preprocessed .npz files, keeping subjects with reports."""
+        space_dir = os.path.join(self.preprocessed_dir, self.space)
+        if not os.path.isdir(space_dir):
+            raise FileNotFoundError(
+                f"Preprocessed cache dir not found: {space_dir}. Run "
+                f"preprocess_volumes.py --out_dir {self.preprocessed_dir} "
+                f"--space {self.space} first."
+            )
+        validate_cache_manifest(
+            space_dir, self.space, self.target_spacing, self.target_shape,
+            self.posterior_shift_mm, self.normalizer_name, self.normalizer_kwargs,
+            allow_mismatch=self.cache_allow_mismatch, tag="MRReportDatasetInfer",
+        )
 
-        nii_files = sorted([
-            os.path.join(img_dir, f)
-            for f in os.listdir(img_dir)
-            if f.endswith('.nii.gz')
-        ])
-
-        if len(nii_files) == 0:
-            return
-
-        sample = {
-            'subject_id': study_uid,
-            'image_paths': nii_files,
-            'sentences': self.subject_to_sentences[study_uid],
-        }
-
-        if study_uid in self.subject_to_labels:
-            sample['labels'] = self.subject_to_labels[study_uid]
-
-        samples.append(sample)
+        samples = []
+        for fn in sorted(os.listdir(space_dir)):
+            if not fn.endswith('.npz'):
+                continue
+            sid = fn[:-len('.npz')]
+            if sid not in self.subject_to_sentences:
+                continue
+            sample = {
+                'subject_id': sid,
+                'cache_path': os.path.join(space_dir, fn),
+                'sentences': self.subject_to_sentences[sid],
+            }
+            if sid in self.subject_to_labels:
+                sample['labels'] = self.subject_to_labels[sid]
+            samples.append(sample)
+        return samples
 
     def __len__(self):
         return len(self.samples)
 
     def load_and_resample_nii(self, path):
-        """Load NIfTI, reorient to RAS, resample to target spacing."""
-        nii_img = nib.load(str(path))
-        nii_img = nib.as_closest_canonical(nii_img)
-
-        img_data = nii_img.get_fdata().astype(np.float32)
-        np.nan_to_num(img_data, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-
-        voxel_sizes = nii_img.header.get_zooms()
-        if len(voxel_sizes) >= 3:
-            current_spacing = (float(voxel_sizes[2]), float(voxel_sizes[0]), float(voxel_sizes[1]))
-        else:
-            current_spacing = (1.0, 1.0, 1.0)
-
-        img_data = img_data.transpose(2, 0, 1)  # (X, Y, Z) -> (Z, X, Y)
-        tensor = torch.from_numpy(img_data).unsqueeze(0).unsqueeze(0)
-        resampled = resize_array(tensor, current_spacing, self.target_spacing)[0, 0]
-
-        return resampled
+        """Load NIfTI, reorient to RAS, resample to target spacing (np [D,H,W])."""
+        return load_and_resample_nii(path, self.target_spacing)
 
     def normalize_volume(self, data):
         return self.normalizer_obj.normalize(data)
 
     def crop_or_pad(self, data):
-        """Center crop or pad to target_shape (D, H, W), with posterior shift on W.
+        """Center crop/pad to target_shape with posterior W shift -> [1,D,H,W] bf16."""
+        arr = crop_or_pad(data, self.target_shape, self.posterior_shift_voxels)
+        return torch.from_numpy(arr).unsqueeze(0).to(torch.bfloat16)  # [1, D, H, W]
 
-        Identical to MRReportDataset.crop_or_pad to keep inference inputs in
-        the same anatomical FOV the model was trained on.
-        """
-        tensor = torch.from_numpy(data.astype(np.float32))
-
-        td, th, tw = self.target_shape
-        d, h, w = tensor.shape
-
-        d_start = max((d - td) // 2, 0)
-        h_start = max((h - th) // 2, 0)
-
-        w_center = w // 2 - self.posterior_shift_voxels
-        w_start = w_center - tw // 2
-        w_start = max(w_start, 0)
-        w_start = min(w_start, max(w - tw, 0))
-
-        tensor = tensor[d_start:d_start + td, h_start:h_start + th, w_start:w_start + tw]
-
-        pad_d_before = (td - tensor.size(0)) // 2
-        pad_d_after = td - tensor.size(0) - pad_d_before
-        pad_h_before = (th - tensor.size(1)) // 2
-        pad_h_after = th - tensor.size(1) - pad_h_before
-        pad_w_before = (tw - tensor.size(2)) // 2
-        pad_w_after = tw - tensor.size(2) - pad_w_before
-
-        tensor = F.pad(
-            tensor,
-            (pad_w_before, pad_w_after, pad_h_before, pad_h_after, pad_d_before, pad_d_after),
-            value=0,
-        )
-
-        return tensor.unsqueeze(0).to(torch.bfloat16)  # [1, D, H, W]
-
-    def __getitem__(self, index):
-        sample = self.samples[index]
+    def _load_volume_stack(self, sample):
+        """[N,1,D,H,W] bf16 stack — from .npz cache if enabled, else live NIfTI."""
+        if self.use_preprocessed:
+            cached = np.load(sample['cache_path'])
+            vols = cached['volumes']  # [N, D, H, W]
+            stack = torch.from_numpy(np.ascontiguousarray(vols)).to(torch.bfloat16)
+            return stack.unsqueeze(1)
 
         volume_tensors = []
         for path in sample['image_paths']:
@@ -255,8 +224,12 @@ class MRReportDatasetInfer(Dataset):
             normalized = self.normalize_volume(resampled)
             tensor = self.crop_or_pad(normalized)
             volume_tensors.append(tensor)
+        return torch.stack(volume_tensors, dim=0)  # [N, 1, D, H, W]
 
-        volume_stack = torch.stack(volume_tensors, dim=0)  # [N, 1, D, H, W]
+    def __getitem__(self, index):
+        sample = self.samples[index]
+
+        volume_stack = self._load_volume_stack(sample)  # [N, 1, D, H, W]
         real_volume_mask = torch.ones(volume_stack.shape[0], dtype=torch.bool)
 
         sentences = sample['sentences']

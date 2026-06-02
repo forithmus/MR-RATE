@@ -185,7 +185,8 @@ def main() -> None:
                         choices=["simple_attn", "cross_attn", "gated"])
     parser.add_argument("--dim_latent", type=int, default=512)
     # Data
-    parser.add_argument("--data_folder", type=str, required=True)
+    parser.add_argument("--data_folder", type=str, default=None,
+                        help="Raw MR data folder. Required unless --use_preprocessed.")
     parser.add_argument("--jsonl_file", type=str, required=True)
     parser.add_argument("--labels_file", type=str, required=True,
                         help="study_uid + per-class binary columns (e.g. mrrate_labels.csv)")
@@ -195,12 +196,24 @@ def main() -> None:
     parser.add_argument("--space", type=str, default="native_space")
     parser.add_argument("--normalizer", type=str, default="zscore",
                         choices=["zscore", "percentile", "minmax"])
+    parser.add_argument("--preprocessed_dir", type=str, default=None,
+                        help="Root of precomputed .npz volumes (preprocess_volumes.py).")
+    parser.add_argument("--use_preprocessed", action="store_true",
+                        help="Read preprocessed .npz instead of raw NIfTI.")
+    parser.add_argument("--cache_allow_mismatch", action="store_true",
+                        help="Downgrade a cache-manifest config mismatch to a warning.")
     # Output
     parser.add_argument("--out_dir", type=str, default="./linear_probe_features")
     parser.add_argument("--strict_missing", action="store_true",
                         help="Abort if the checkpoint is missing any model parameter "
                              "(catches wrong --fusion_mode / --encoder mismatch).")
     args = parser.parse_args()
+
+    if args.use_preprocessed:
+        if not args.preprocessed_dir:
+            parser.error("--use_preprocessed requires --preprocessed_dir")
+    elif not args.data_folder:
+        parser.error("--data_folder is required unless --use_preprocessed is set")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -231,6 +244,9 @@ def main() -> None:
         labels_file=args.labels_file,
         splits_csv=args.splits_csv,
         split=args.split,
+        preprocessed_dir=args.preprocessed_dir,
+        use_preprocessed=args.use_preprocessed,
+        cache_allow_mismatch=args.cache_allow_mismatch,
     )
     if len(ds) == 0:
         raise RuntimeError(f"No subjects found for split={args.split}.")
