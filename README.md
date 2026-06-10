@@ -55,11 +55,14 @@ Coming soon
 
 ## License
 
-We are committed to fostering innovation and collaboration in the research community. All elements of the MR-RATE repository are released under the **[Creative Commons Attribution–NonCommercial–ShareAlike (CC BY-NC-SA)](https://creativecommons.org/licenses/by-nc-sa/4.0/)** license.
+We are committed to fostering innovation and collaboration in the research community.
 
-This allows all elements to be freely used, modified, and shared for **non-commercial research purposes**, provided that the original work is properly cited and any derivative works are distributed under the same license.
+- **Data preprocessing code and the MR-RATE codebase** are released under the **Apache License 2.0**, allowing broad use, modification, and distribution in both academic and commercial settings, subject to the terms of the license.
+- **All datasets and model weights** are released under the **[Creative Commons Attribution–NonCommercial–ShareAlike (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/)** license.
 
-For commercial inquiries related to MR-RATE, please contact: contact@forithmus.com
+This means that the data and model weights may be freely used, modified, and shared for **non-commercial research purposes**, provided that appropriate attribution is given and any derivative works are distributed under the same license.
+
+For commercial use of the datasets or model weights, please contact: **contact@forithmus.com**
 
 ## Acknowledgements
 
