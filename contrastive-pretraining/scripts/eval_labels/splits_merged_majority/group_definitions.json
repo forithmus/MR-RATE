@@ -1,0 +1,89 @@
+{
+  "PP_Cerebrovascular": [
+    "Cerebral infarction",
+    "Cerebral hemorrhage",
+    "Lacunar infarct",
+    "Silent micro-hemorrhage of brain",
+    "Cavernous hemangioma",
+    "Subdural intracranial hemorrhage",
+    "Intracranial aneurysm",
+    "Watershed infarct"
+  ],
+  "PP_Neoplastic": [
+    "Metastatic malignant neoplasm to brain",
+    "Intracranial meningioma",
+    "Glioma",
+    "Pituitary adenoma",
+    "Schwannoma"
+  ],
+  "PP_Neurodegenerative": [
+    "Cerebral atrophy",
+    "Ventriculomegaly",
+    "Cerebellar degeneration"
+  ],
+  "PP_Spinal": [
+    "Herniation of nucleus pulposus",
+    "Spinal cord compression",
+    "Foraminal Spinal Stenosis",
+    "Spinal stenosis",
+    "Hemangioma of vertebral column"
+  ],
+  "PP_Cystic_developmental": [
+    "Arachnoid cyst",
+    "Cyst of pineal gland",
+    "Structure of cave of septum pellucidum",
+    "Mega cisterna magna",
+    "Chiari malformation",
+    "Rathke's pouch cyst",
+    "Choroid plexus cyst",
+    "Lipoma of brain"
+  ],
+  "PP_Infectious": [
+    "Mastoiditis",
+    "Chronic mastoiditis"
+  ],
+  "PP_Inflammatory": [
+    "Demyelinating disease of central nervous system"
+  ],
+  "PP_Unspecific_bucket": [
+    "Gliosis",
+    "Cerebral edema",
+    "Encephalomalacia"
+  ],
+  "BP_Atrophies": [
+    "Cerebral atrophy",
+    "Ventriculomegaly",
+    "Cerebellar degeneration"
+  ],
+  "BP_Contrast_enhancing_intracranial": [
+    "Metastatic malignant neoplasm to brain",
+    "Intracranial meningioma",
+    "Glioma",
+    "Pituitary adenoma",
+    "Schwannoma"
+  ],
+  "BP_Infectious_lesions": [
+    "Mastoiditis",
+    "Chronic mastoiditis"
+  ],
+  "BP_Edematous_lesions": [
+    "Cerebral infarction",
+    "Lacunar infarct",
+    "Watershed infarct",
+    "Demyelinating disease of central nervous system"
+  ],
+  "BP_Hemorrhagic_lesions": [
+    "Cerebral hemorrhage",
+    "Silent micro-hemorrhage of brain",
+    "Cavernous hemangioma",
+    "Encephalomalacia"
+  ],
+  "BP_Cystic_lesions": [
+    "Arachnoid cyst",
+    "Cyst of pineal gland",
+    "Structure of cave of septum pellucidum",
+    "Mega cisterna magna",
+    "Rathke's pouch cyst",
+    "Choroid plexus cyst"
+  ]
+}

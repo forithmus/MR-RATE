@@ -1,0 +1,60 @@
+{
+  "pathologies": {
+    "PP_Cerebrovascular": {
+      "positive": "There is Cerebrovascular",
+      "negative": "There is no Cerebrovascular"
+    },
+    "PP_Neoplastic": {
+      "positive": "There is Neoplastic",
+      "negative": "There is no Neoplastic"
+    },
+    "PP_Neurodegenerative": {
+      "positive": "There is Neurodegenerative",
+      "negative": "There is no Neurodegenerative"
+    },
+    "PP_Spinal": {
+      "positive": "There is Spinal",
+      "negative": "There is no Spinal"
+    },
+    "PP_Cystic_developmental": {
+      "positive": "There is Cystic developmental",
+      "negative": "There is no Cystic developmental"
+    },
+    "PP_Infectious": {
+      "positive": "There is Infectious",
+      "negative": "There is no Infectious"
+    },
+    "PP_Inflammatory": {
+      "positive": "There is Inflammatory",
+      "negative": "There is no Inflammatory"
+    },
+    "PP_Unspecific_bucket": {
+      "positive": "There is Unspecific bucket",
+      "negative": "There is no Unspecific bucket"
+    },
+    "BP_Atrophies": {
+      "positive": "There is Atrophies",
+      "negative": "There is no Atrophies"
+    },
+    "BP_Contrast_enhancing_intracranial": {
+      "positive": "There is Contrast enhancing intracranial",
+      "negative": "There is no Contrast enhancing intracranial"
+    },
+    "BP_Infectious_lesions": {
+      "positive": "There is Infectious lesions",
+      "negative": "There is no Infectious lesions"
+    },
+    "BP_Edematous_lesions": {
+      "positive": "There is Edematous lesions",
+      "negative": "There is no Edematous lesions"
+    },
+    "BP_Hemorrhagic_lesions": {
+      "positive": "There is Hemorrhagic lesions",
+      "negative": "There is no Hemorrhagic lesions"
+    },
+    "BP_Cystic_lesions": {
+      "positive": "There is Cystic lesions",
+      "negative": "There is no Cystic lesions"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# Large derived / convenience CSVs — the linear probe only consumes
+# mrrate_*labels.csv + splits.csv. These are regenerable with
+# build_merged_group_labels.py, so they are kept out of git to avoid bloat.
+**/all.csv
+**/train.csv
+**/val.csv
+**/test.csv
