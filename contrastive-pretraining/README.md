@@ -527,12 +527,23 @@ Column names must match the pathology labels in `--pathologies_file`. The pre-co
 
 A supervised baseline that freezes the pretrained MR-RATE encoder and trains only a linear classifier on top of its pooled visual features. This is the standard probe used to measure how well the contrastive representation captures the downstream pathology labels, separate from the zero-shot prompt quality.
 
-The probe is two scripts run in order:
+The probe is two (optionally three) scripts run in order:
 
 1. **`extract_features.py`** — encode every subject once with the frozen encoder and dump features to disk. This is the slow step; it runs the same model + preprocessing path as `inference.py`. Run it once per split.
 2. **`linear_probe.py`** — train `nn.Linear(dim_latent, num_classes)` with `BCEWithLogitsLoss` on the cached features, pick the best epoch by val mean-AUROC, report test metrics through `eval.evaluate_internal` (identical AUROC pipeline to inference).
+3. **`relabel_features.py`** *(optional)* — swap in a different label set on top of already-cached features **without re-encoding**. See [Reusing features for a different label set](#reusing-features-for-a-different-label-set-no-re-extract).
 
-Why precompute features: the 3D encoder is the expensive part. Once it is frozen, every training epoch sees the same features, so running the encoder once and then training the linear head on cached `.npy` files is orders of magnitude faster than re-encoding each epoch — the standard CLIP / SimCLR / DINO linear-probe recipe.
+Why precompute features: the 3D encoder is the expensive part. Once it is frozen, every training epoch sees the same features, so running the encoder once and then training the linear head on cached `.npy` files is orders of magnitude faster than re-encoding each epoch — the standard CLIP / SimCLR / DINO linear-probe recipe. The corollary: **the labels are not part of the features**, so changing the label set never requires re-extraction — only the cheap `linear_probe.py` step is repeated (see step 3).
+
+### Label sets
+
+The class count is **derived from the labels CSV at runtime** — `extract_features.py` sets `num_classes = len(label_columns)` and writes `label_names.json` from the CSV header, and `linear_probe.py` sizes `nn.Linear(dim, n_classes)` from that. Nothing is hardcoded, so any labels CSV (`study_uid` + binary class columns) is a drop-in `--labels_file` with no code change. The ready-made set lives under `scripts/eval_labels/`:
+
+| Folder | Classes | Ground-truth rule |
+|--------|--------:|-------------------|
+| `splits_merged_majority/` (`mrrate_merged_labels.csv`) | 14 | 3-model majority (Claude Opus 4.7 + GPT-5.5 + Nemotron-3 Super 120B; positive when ≥2 of the available votes agree), then collapsed into the neuroradiologist's clinical groups (8 pathophysiology `PP_*` + 6 imaging-phenotype `BP_*`) |
+
+It pairs a labels CSV (`study_uid` + 14 binary class columns) with a `splits.csv` (`study_uid,split`). Reproduce it with `scripts/eval_labels/build_merged_group_labels.py --source majority` (the script also supports `--source {raw,csv32}` for 2-model agreement variants if you need them).
 
 ### Step 1 — Cache features
 
@@ -590,9 +601,38 @@ Outputs in `--results_dir`:
 
 The best epoch by val mean-AUROC is restored before test evaluation. Single-class columns (all 0 or all 1 in the test split) are gracefully reported as `NaN` and excluded from the macro mean.
 
+### Reusing features for a different label set (no re-extract)
+
+Because labels are not baked into the encoder features, you only ever run `extract_features.py` **once**. To probe a different label CSV — a different ground-truth rule, or a different grouping — relabel the cached features instead of re-encoding:
+
+```bash
+# (once) cache features
+for SPLIT in train val test; do
+  python scripts/extract_features.py \
+      --encoder vjepa2 --fusion_mode late --pooling_strategy simple_attn \
+      --weights_path ./mr_rate_results/MrRate.5000.pt \
+      --data_folder /path/to/data --jsonl_file /path/to/reports.jsonl \
+      --labels_file scripts/eval_labels/splits_merged_majority/mrrate_merged_labels.csv \
+      --splits_csv  scripts/eval_labels/splits_merged_majority/splits.csv \
+      --split $SPLIT --normalizer zscore --out_dir ./lp_features
+done
+
+# train the head on those features
+python scripts/linear_probe.py --features_dir ./lp_features --results_dir ./lp_results
+
+# later: probe ANY other labels CSV on the SAME features — instant, no encoder pass
+python scripts/relabel_features.py \
+    --features_dir ./lp_features \
+    --labels_file  /path/to/other_labels.csv \
+    --out_dir      ./lp_features_other
+python scripts/linear_probe.py --features_dir ./lp_features_other --results_dir ./lp_results_other
+```
+
+`relabel_features.py` symlinks `features_<split>.npy` + `subject_ids_<split>.txt` from `--features_dir` and rebuilds only `labels_<split>.npy` (in the exact subject order of the source) and `label_names.json` from `--labels_file`. If a cached subject is missing from the new labels CSV it **errors out** rather than silently misaligning rows. Use `--copy` to copy the feature files instead of symlinking (e.g. to move the dir to another machine).
+
 ### Notes
 
-- Both scripts are single-process. The linear head is `Linear(512, 32) ≈ 16K params` over ~180 MB of cached features — DDP overhead would dominate. For feature extraction, shard externally by running one job per split, or by splitting `splits.csv` into chunks and concatenating the resulting `.npy` files.
+- Both scripts are single-process. The linear head is tiny — `Linear(512, num_classes)`, e.g. ~16K params for 32 classes or ~7K for the 14 merged groups — over ~180 MB of cached features, so DDP overhead would dominate. For feature extraction, shard externally by running one job per split, or by splitting `splits.csv` into chunks and concatenating the resulting `.npy` files.
 - `--encoder`, `--fusion_mode`, `--pooling_strategy`, and `--dim_latent` must match the values used when the checkpoint was trained; if they don't, `_load_and_verify` will surface it loudly instead of silently loading garbage.
 
 ## Testing

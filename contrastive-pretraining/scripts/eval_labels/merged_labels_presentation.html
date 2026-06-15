@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MR-RATE · Merged Pathology Group Labels</title>
+<style>
+:root { --bg:#0f172a; --panel:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color:var(--ink); background:#f1f5f9; line-height:1.5; }
+.hero { background:linear-gradient(135deg,#0f172a,#1e3a8a); color:#fff; padding:56px 32px 40px; }
+.wrap { max-width:1080px; margin:0 auto; padding:0 24px; }
+.hero h1 { margin:0 0 8px; font-size:30px; letter-spacing:-.02em; }
+.hero p { margin:0; color:#cbd5e1; max-width:760px; }
+.stats { display:flex; gap:16px; flex-wrap:wrap; margin-top:28px; }
+.stat { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15);
+  border-radius:12px; padding:14px 20px; min-width:120px; }
+.stat b { display:block; font-size:24px; }
+.stat span { color:#94a3b8; font-size:13px; }
+section { padding:40px 0; }
+h2 { font-size:20px; margin:0 0 4px; }
+.sub { color:var(--muted); margin:0 0 24px; font-size:14px; }
+.flow { display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; }
+.flow .step { flex:1; min-width:160px; background:var(--panel); border:1px solid var(--line);
+  border-radius:12px; padding:16px; }
+.flow .step .k { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+.flow .step .v { font-weight:600; margin-top:4px; }
+.arrow { align-self:center; color:#94a3b8; font-size:22px; }
+.scheme-h { display:flex; align-items:center; gap:10px; margin:8px 0 16px; }
+.scheme-h .badge { width:12px; height:12px; border-radius:3px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:0 0 14px;
+  overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+.card-head { display:flex; justify-content:space-between; align-items:center; padding:14px 16px 10px; }
+.card-title { font-weight:600; font-size:14px; }
+.card-prev b { font-size:15px; }
+.card-prev span { color:var(--muted); font-size:13px; }
+.bar { height:6px; background:#f1f5f9; margin:0 16px 12px; border-radius:4px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:4px; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; padding:0 16px; }
+.chip { font-size:11.5px; padding:3px 8px; border:1px solid var(--line); border-radius:999px;
+  background:#fff; white-space:nowrap; }
+.rec { margin:10px 16px 0; font-size:12px; color:#059669; background:#ecfdf5;
+  border:1px solid #a7f3d0; border-radius:8px; padding:6px 10px; }
+table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line);
+  border-radius:12px; overflow:hidden; font-size:13.5px; }
+th,td { padding:10px 14px; text-align:left; border-bottom:1px solid var(--line); }
+th { background:#f8fafc; color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.03em; }
+td.num { text-align:right; font-variant-numeric:tabular-nums; }
+tr:last-child td { border-bottom:none; }
+.dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; vertical-align:middle; }
+.up { color:#059669; font-weight:600; }
+.down { color:#dc2626; font-weight:600; }
+.same { color:#cbd5e1; }
+.note { background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:16px 18px; font-size:13.5px; }
+pre { background:#0f172a; color:#e2e8f0; padding:16px 18px; border-radius:12px; overflow:auto;
+  font-size:13px; line-height:1.6; }
+.files { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+.file { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; font-size:13px; }
+.file b { font-family:ui-monospace,Menlo,monospace; font-size:12.5px; }
+.file span { color:var(--muted); display:block; margin-top:3px; }
+footer { color:var(--muted); font-size:12.5px; padding:32px 0 60px; text-align:center; }
+.tag { display:inline-block; font-size:11px; padding:2px 8px; border-radius:6px; background:#dbeafe; color:#1e40af; font-weight:600; }
+</style></head>
+<body>
+
+<div class="hero"><div class="wrap">
+  <div class="tag">MR-RATE · linear-probe targets</div>
+  <h1>Merged Pathology Group Labels</h1>
+  <p>Radiology-report findings collapsed from 37 fine-grained pathologies into the
+  neuroradiologist's clinically-grounded groups, derived from a <b>3-model majority vote</b>.</p>
+  <div class="stats">
+    <div class="stat"><b>97,896</b><span>studies labeled</span></div>
+    <div class="stat"><b>14</b><span>group targets</span></div>
+    <div class="stat"><b>3</b><span>voting models</span></div>
+    <div class="stat"><b>88,582 / 3,764 / 5,550</b><span>train / val / test</span></div>
+  </div>
+</div></div>
+
+<div class="wrap">
+
+<section>
+  <h2>How the ground-truth labels are derived</h2>
+  <p class="sub">Each study is independently labeled by three models; a finding is positive when a <b>majority</b> agree (≥2 of the available votes). Groups are then the logical OR of their member pathologies.</p>
+  <div class="flow">
+    <div class="step"><div class="k">Anthropic</div><div class="v">Claude Opus 4.7</div></div>
+    <div class="step"><div class="k">OpenAI</div><div class="v">GPT-5.5</div></div>
+    <div class="step"><div class="k">NVIDIA</div><div class="v">Nemotron-3 Super 120B</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="k">Majority vote</div><div class="v">37 pathology labels</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="k">OR per group</div><div class="v">14 merged targets</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Grouping scheme 1 — Pathophysiologie</h2>
+  <p class="sub">Eight mutually-exclusive groups by underlying mechanism. Chips list member pathologies.</p>
+  <div class="grid">
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Cerebrovascular</div>
+            <div class="card-prev"><b>9,847</b> <span>(10.1%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:24.3%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Cerebral infarction</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Cerebral hemorrhage</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Lacunar infarct</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Silent micro-hemorrhage of brain</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Cavernous hemangioma</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Subdural intracranial hemorrhage</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Intracranial aneurysm</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Watershed infarct</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Neoplastic</div>
+            <div class="card-prev"><b>8,112</b> <span>(8.3%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:20.0%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Metastatic malignant neoplasm to brain</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Intracranial meningioma</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Glioma</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Pituitary adenoma</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Schwannoma</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Neurodegenerative</div>
+            <div class="card-prev"><b>18,237</b> <span>(18.6%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:45.0%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Cerebral atrophy</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Ventriculomegaly</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Cerebellar degeneration</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Spinal</div>
+            <div class="card-prev"><b>1,955</b> <span>(2.0%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:4.8%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Herniation of nucleus pulposus</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Spinal cord compression</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Foraminal Spinal Stenosis</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Spinal stenosis</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Hemangioma of vertebral column</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Cystic_developmental</div>
+            <div class="card-prev"><b>9,216</b> <span>(9.4%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:22.8%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Arachnoid cyst</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Cyst of pineal gland</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Structure of cave of septum pellucidum</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Mega cisterna magna</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Chiari malformation</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Rathke's pouch cyst</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Choroid plexus cyst</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Lipoma of brain</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Infectious</div>
+            <div class="card-prev"><b>4,779</b> <span>(4.9%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:11.8%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Mastoiditis</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Chronic mastoiditis</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Inflammatory</div>
+            <div class="card-prev"><b>2,882</b> <span>(2.9%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:7.1%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Demyelinating disease of central nervous system</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #2563eb">
+            <div class="card-title">PP_Unspecific_bucket</div>
+            <div class="card-prev"><b>40,483</b> <span>(41.4%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:100.0%;background:#2563eb"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#2563eb33;color:#2563eb">Gliosis</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Cerebral edema</span><span class="chip" style="border-color:#2563eb33;color:#2563eb">Encephalomalacia</span></div>
+          
+        </div></div>
+</section>
+
+<section>
+  <h2>Grouping scheme 2 — Bildphänotyp</h2>
+  <p class="sub">Six groups by imaging phenotype. (Three further phenotype groups are identical to their pathophysiology counterparts and are not duplicated.)</p>
+  <div class="grid">
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #9333ea">
+            <div class="card-title">BP_Atrophies</div>
+            <div class="card-prev"><b>18,237</b> <span>(18.6%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:45.0%;background:#9333ea"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#9333ea33;color:#9333ea">Cerebral atrophy</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Ventriculomegaly</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Cerebellar degeneration</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #9333ea">
+            <div class="card-title">BP_Contrast_enhancing_intracranial</div>
+            <div class="card-prev"><b>8,112</b> <span>(8.3%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:20.0%;background:#9333ea"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#9333ea33;color:#9333ea">Metastatic malignant neoplasm to brain</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Intracranial meningioma</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Glioma</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Pituitary adenoma</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Schwannoma</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #9333ea">
+            <div class="card-title">BP_Infectious_lesions</div>
+            <div class="card-prev"><b>4,779</b> <span>(4.9%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:11.8%;background:#9333ea"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#9333ea33;color:#9333ea">Mastoiditis</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Chronic mastoiditis</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #9333ea">
+            <div class="card-title">BP_Edematous_lesions</div>
+            <div class="card-prev"><b>8,279</b> <span>(8.5%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:20.5%;background:#9333ea"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#9333ea33;color:#9333ea">Cerebral infarction</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Lacunar infarct</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Watershed infarct</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Demyelinating disease of central nervous system</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #9333ea">
+            <div class="card-title">BP_Hemorrhagic_lesions</div>
+            <div class="card-prev"><b>7,413</b> <span>(7.6%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:18.3%;background:#9333ea"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#9333ea33;color:#9333ea">Cerebral hemorrhage</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Silent micro-hemorrhage of brain</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Cavernous hemangioma</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Encephalomalacia</span></div>
+          
+        </div>
+        <div class="card">
+          <div class="card-head" style="border-left:4px solid #9333ea">
+            <div class="card-title">BP_Cystic_lesions</div>
+            <div class="card-prev"><b>8,568</b> <span>(8.8%)</span></div>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:21.2%;background:#9333ea"></div></div>
+          <div class="chips"><span class="chip" style="border-color:#9333ea33;color:#9333ea">Arachnoid cyst</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Cyst of pineal gland</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Structure of cave of septum pellucidum</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Mega cisterna magna</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Rathke's pouch cyst</span><span class="chip" style="border-color:#9333ea33;color:#9333ea">Choroid plexus cyst</span></div>
+          
+        </div></div>
+</section>
+
+<section>
+  <h2>Prevalence by split</h2>
+  <p class="sub">Positive study counts per group. The last column shows the change versus the 2-model (Claude ∧ GPT) agreement labels.</p>
+  <table>
+    <tr><th>Group</th><th style="text-align:right">train+</th><th style="text-align:right">val+</th>
+    <th style="text-align:right">test+</th><th style="text-align:right">total+</th>
+    <th style="text-align:right">prev.</th><th style="text-align:right">Δ vs 2-model</th></tr>
+    
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Cerebrovascular</td>
+          <td class="num">8,916</td>
+          <td class="num">345</td>
+          <td class="num">586</td>
+          <td class="num"><b>9,847</b></td>
+          <td class="num">10.1%</td>
+          <td class="num"><span class="up">+919</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Neoplastic</td>
+          <td class="num">7,382</td>
+          <td class="num">292</td>
+          <td class="num">438</td>
+          <td class="num"><b>8,112</b></td>
+          <td class="num">8.3%</td>
+          <td class="num"><span class="up">+102</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Neurodegenerative</td>
+          <td class="num">16,595</td>
+          <td class="num">600</td>
+          <td class="num">1,042</td>
+          <td class="num"><b>18,237</b></td>
+          <td class="num">18.6%</td>
+          <td class="num"><span class="up">+561</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Spinal</td>
+          <td class="num">1,814</td>
+          <td class="num">51</td>
+          <td class="num">90</td>
+          <td class="num"><b>1,955</b></td>
+          <td class="num">2.0%</td>
+          <td class="num"><span class="up">+19</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Cystic_developmental</td>
+          <td class="num">8,353</td>
+          <td class="num">355</td>
+          <td class="num">508</td>
+          <td class="num"><b>9,216</b></td>
+          <td class="num">9.4%</td>
+          <td class="num"><span class="up">+127</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Infectious</td>
+          <td class="num">4,349</td>
+          <td class="num">178</td>
+          <td class="num">252</td>
+          <td class="num"><b>4,779</b></td>
+          <td class="num">4.9%</td>
+          <td class="num"><span class="up">+424</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Inflammatory</td>
+          <td class="num">2,721</td>
+          <td class="num">71</td>
+          <td class="num">90</td>
+          <td class="num"><b>2,882</b></td>
+          <td class="num">2.9%</td>
+          <td class="num"><span class="up">+38</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#2563eb"></span>PP_Unspecific_bucket</td>
+          <td class="num">36,692</td>
+          <td class="num">1,487</td>
+          <td class="num">2,304</td>
+          <td class="num"><b>40,483</b></td>
+          <td class="num">41.4%</td>
+          <td class="num"><span class="up">+462</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#9333ea"></span>BP_Atrophies</td>
+          <td class="num">16,595</td>
+          <td class="num">600</td>
+          <td class="num">1,042</td>
+          <td class="num"><b>18,237</b></td>
+          <td class="num">18.6%</td>
+          <td class="num"><span class="up">+561</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#9333ea"></span>BP_Contrast_enhancing_intracranial</td>
+          <td class="num">7,382</td>
+          <td class="num">292</td>
+          <td class="num">438</td>
+          <td class="num"><b>8,112</b></td>
+          <td class="num">8.3%</td>
+          <td class="num"><span class="up">+102</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#9333ea"></span>BP_Infectious_lesions</td>
+          <td class="num">4,349</td>
+          <td class="num">178</td>
+          <td class="num">252</td>
+          <td class="num"><b>4,779</b></td>
+          <td class="num">4.9%</td>
+          <td class="num"><span class="up">+424</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#9333ea"></span>BP_Edematous_lesions</td>
+          <td class="num">7,599</td>
+          <td class="num">265</td>
+          <td class="num">415</td>
+          <td class="num"><b>8,279</b></td>
+          <td class="num">8.5%</td>
+          <td class="num"><span class="up">+166</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#9333ea"></span>BP_Hemorrhagic_lesions</td>
+          <td class="num">6,745</td>
+          <td class="num">249</td>
+          <td class="num">419</td>
+          <td class="num"><b>7,413</b></td>
+          <td class="num">7.6%</td>
+          <td class="num"><span class="up">+839</span></td>
+        </tr>
+        <tr>
+          <td><span class="dot" style="background:#9333ea"></span>BP_Cystic_lesions</td>
+          <td class="num">7,768</td>
+          <td class="num">327</td>
+          <td class="num">473</td>
+          <td class="num"><b>8,568</b></td>
+          <td class="num">8.8%</td>
+          <td class="num"><span class="up">+58</span></td>
+        </tr>
+  </table>
+</section>
+
+<section>
+  <h2>Label variants available</h2>
+  <p class="sub">Same 14 columns and study set throughout — only the voting rule differs.</p>
+  <div class="note">
+    <b>splits_merged_majority/</b> &nbsp;— this report. 3-way majority of Claude Opus 4.7 + GPT-5.5 + Nemotron-3 Super 120B (≥2 of available votes), over all 37 pathologies.<br><br>
+    <b>splits_merged/</b> &nbsp;— 2-model strict agreement (Claude ∧ GPT).<br><br>
+    <b>splits_merged_32col/</b> &nbsp;— legacy 2-model agreement built from the 32-column labels (5 pathologies dropped).
+  </div>
+</section>
+
+<section>
+  <h2>Files &amp; usage</h2>
+  <div class="files">
+    <div class="file"><b>mrrate_merged_labels.csv</b><span>study_uid + 14 binary columns</span></div>
+    <div class="file"><b>train.csv / val.csv / test.csv</b><span>per-split, same columns</span></div>
+    <div class="file"><b>splits.csv</b><span>study_uid → split</span></div>
+    <div class="file"><b>pathologies.json</b><span>group names &amp; prompts</span></div>
+    <div class="file"><b>group_definitions.json</b><span>group → member pathologies</span></div>
+  </div>
+  <pre>--labels_csv  splits_merged/mrrate_merged_labels.csv
+--splits_csv  splits_merged/splits.csv
+--split       train        # / val / test</pre>
+</section>
+
+<footer>MR-RATE · merged-group labels for linear probing · 3-model majority: Claude Opus 4.7 · GPT-5.5 · Nemotron-3 Super 120B</footer>
+</div>
+</body></html>
