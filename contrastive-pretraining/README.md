@@ -601,6 +601,105 @@ Outputs in `--results_dir`:
 
 The best epoch by val mean-AUROC is restored before test evaluation. Single-class columns (all 0 or all 1 in the test split) are gracefully reported as `NaN` and excluded from the macro mean.
 
+## Frozen-encoder MIL probing
+
+MIL keeps the visual encoder frozen and trains only a gated
+Classify-Then-Aggregate head. Unlike linear probing, which uses one pooled vector
+per study, MIL operates on the projected visual tokens from every valid series.
+
+Two execution modes are available:
+
+| Mode | Token embeddings | Best use |
+|------|------------------|----------|
+| Cached MIL | Written once as ragged per-study bags | Repeated experiments and faster training |
+| Online MIL | Recomputed each epoch and discarded | Limited storage or one-off experiments |
+
+The encoder configuration must match the contrastive checkpoint, including
+`--encoder`, `--fusion_mode`, `--pooling_strategy`, and `--dim_latent`. MIL
+requires `--fusion_mode late` so valid series remain separate before their tokens
+are concatenated into each study bag. Add `--extra_latent_projection` when that
+projection was used during contrastive pretraining.
+
+### Cached MIL
+
+Extract token-level features for every split:
+
+```bash
+WEIGHTS=/path/to/model_checkpoint.pt
+DATA=/path/to/mri
+REPORTS=/path/to/reports.jsonl
+LABELS=/path/to/labels.csv
+SPLITS=/path/to/splits.csv
+FEATURES=/path/to/mil_features
+
+for SPLIT in train val test; do
+  python scripts/extract_features.py \
+    --weights_path "$WEIGHTS" \
+    --encoder vjepa2 \
+    --fusion_mode late \
+    --pooling_strategy simple_attn \
+    --dim_latent 512 \
+    --data_folder "$DATA" \
+    --jsonl_file "$REPORTS" \
+    --labels_file "$LABELS" \
+    --splits_csv "$SPLITS" \
+    --split "$SPLIT" \
+    --normalizer zscore \
+    --feature_level tokens \
+    --cache_dtype float16 \
+    --out_dir "$FEATURES"
+done
+```
+
+Train and evaluate the MIL head:
+
+```bash
+python scripts/mil_probe.py \
+  --features_dir "$FEATURES" \
+  --results_dir /path/to/mil_results \
+  --epochs 50 \
+  --batch_size 4
+```
+
+Cached MIL stores all retained token embeddings plus study offsets and provenance.
+The pooled `features_<split>.npy` files used by the linear probe cannot be reused
+for MIL. To bound cache size, add `--max_tokens_per_study 2048` during extraction.
+Leaving it at `0` retains every token; any positive limit is deterministic
+subsampling.
+
+### Online MIL without a token cache
+
+Online MIL reconstructs the same frozen encoder and sends each study's tokens
+directly to the same MIL head:
+
+```bash
+python scripts/mil_probe_online.py \
+  --weights_path "$WEIGHTS" \
+  --encoder vjepa2 \
+  --fusion_mode late \
+  --data_folder "$DATA" \
+  --jsonl_file "$REPORTS" \
+  --labels_file "$LABELS" \
+  --splits_csv "$SPLITS" \
+  --results_dir /path/to/mil_online_results \
+  --epochs 50 \
+  --grad_accum_steps 4
+```
+
+The encoder remains in evaluation mode, runs under `torch.no_grad()`, and is
+excluded from the optimizer. Token embeddings are discarded after each study and
+are never written to disk. This avoids the token-cache storage cost but repeats
+encoder computation every epoch.
+
+Studies are encoded one at a time because their numbers of series differ.
+`--grad_accum_steps` provides a larger effective head-training batch size.
+`--max_tokens_per_study` can reduce MIL-head memory after encoding but does not
+reduce encoder computation. Preprocessed image inputs remain supported through
+`--use_preprocessed --preprocessed_dir /path/to/preprocessed`.
+
+Both modes select checkpoints and class thresholds using validation data only,
+then evaluate the fixed model and thresholds on the test split.
+
 ### Reusing features for a different label set (no re-extract)
 
 Because labels are not baked into the encoder features, you only ever run `extract_features.py` **once**. To probe a different label CSV — a different ground-truth rule, or a different grouping — relabel the cached features instead of re-encoding:
