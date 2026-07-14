@@ -340,6 +340,48 @@ class MRRATE(nn.Module):
             
         return merged, token_mask
 
+    def _encode_visual_instances(self, image, real_volume_mask, vis_proj_layer):
+        """Return every valid series token as one study-level MIL bag.
+
+        Contrastive late fusion averages corresponding tokens across series.
+        Classify-Then-Aggregate MIL must instead receive the complete set of
+        series-specific tokens and perform the first study-level aggregation.
+        """
+        if self.fusion_mode != "late":
+            raise ValueError(
+                "Series-preserving MIL extraction requires fusion_mode='late'. "
+                "Other fusion modes aggregate series before projected tokens are available."
+            )
+
+        b, r, _c, _d, _h, _w = image.shape
+        per_series = []
+        tokens_per_series = None
+        for series_index in range(r):
+            rank = dist.get_rank() if dist.is_initialized() else 0
+            if rank == 0:
+                print(
+                    f"[MRRATE rank=0] encoding MIL series {series_index + 1}/{r}...",
+                    flush=True,
+                )
+            encoded = self.run_checkpoint(self.visual_transformer, image[:, series_index])
+            projected = vis_proj_layer(encoded)
+            if projected.ndim != 3:
+                raise RuntimeError(
+                    f"Visual encoder must return [B,T,D] tokens, got {projected.shape}"
+                )
+            if tokens_per_series is None:
+                tokens_per_series = projected.shape[1]
+            elif projected.shape[1] != tokens_per_series:
+                raise RuntimeError("All padded series must produce the same token count")
+            per_series.append(projected)
+
+        stacked = torch.stack(per_series, dim=1)  # [B,R,T,D]
+        token_mask = real_volume_mask.unsqueeze(-1).expand(b, r, tokens_per_series)
+        return (
+            stacked.reshape(b, r * tokens_per_series, stacked.shape[-1]),
+            token_mask.reshape(b, r * tokens_per_series),
+        )
+
     def state_dict(self, *args, **kwargs):
         return super().state_dict(*args, **kwargs)
 
@@ -370,6 +412,7 @@ class MRRATE(nn.Module):
             aug_text=None,
             mode='clip',
             debug=False,
+            return_visual_tokens=False,
             **kwargs
     ):
         b, r, c, d, h, w = image.shape
@@ -380,7 +423,10 @@ class MRRATE(nn.Module):
         if real_volume_mask is None:
             real_volume_mask = torch.ones(b, r, dtype=torch.bool, device=device)
 
-        use_extra_proj = self.extra_latent_projection and return_loss
+        if return_visual_tokens and return_loss:
+            raise ValueError("return_visual_tokens and return_loss are mutually exclusive")
+
+        use_extra_proj = self.extra_latent_projection and (return_loss or return_visual_tokens)
         vis_proj_layer = self.to_visual_latent_extra if use_extra_proj else self.to_visual_latent
         text_proj_layer = self.to_text_latent_extra if use_extra_proj else self.to_text_latent
 
@@ -406,14 +452,25 @@ class MRRATE(nn.Module):
             print(f"[DEBUG MRRATE rank={dist.get_rank()}] text done, encoding visual...", flush=True)
 
         # 2. Encode Visual Tokens (Returns Tokens + Mask)
-        visual_tokens, token_mask = self._encode_visual_tokens(
-            image, real_volume_mask, vis_proj_layer,
-            text_latents=text_latents,
-            num_sentences_per_image=num_sentences_per_image
-        )
+        if return_visual_tokens:
+            visual_tokens, token_mask = self._encode_visual_instances(
+                image, real_volume_mask, vis_proj_layer
+            )
+        else:
+            visual_tokens, token_mask = self._encode_visual_tokens(
+                image, real_volume_mask, vis_proj_layer,
+                text_latents=text_latents,
+                num_sentences_per_image=num_sentences_per_image,
+            )
 
         if debug and dist.is_initialized():
             print(f"[DEBUG MRRATE rank={dist.get_rank()}] visual done: tokens={visual_tokens.shape}, mask={token_mask.shape}", flush=True)
+
+        # Downstream MIL consumes the projected visual instances before the
+        # global masked mean used by standard MR-RATE inference. This opt-in
+        # branch leaves contrastive training and existing inference unchanged.
+        if return_visual_tokens:
+            return visual_tokens, token_mask
 
         # 3. Training Loss
         if return_loss:
