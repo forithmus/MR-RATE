@@ -1,0 +1,53 @@
+seed: 17
+mode: cached
+output_dir: runs/mrrate_single_writer_v1
+
+upstream_root: /hnvme/workspace/b180dc51-sezgin/MR-RATE-linearprobe/contrastive-pretraining
+encoder_checkpoint: /path/to/mrrate_pretraining_checkpoint.pt
+mil_checkpoint: /path/to/mil_head.pt
+llm_path: /hnvme/data/LLM-TZ/hub/models--google--gemma-3-12b-it/snapshots/96b6f1eccf38110c56df3a15bffe176da04bfd80
+
+data:
+  data_folder: /hnvme/workspace/b180dc51-sezgin/MR-RATE-validation/mri
+  jsonl_file: /hnvme/workspace/b180dc51-sezgin/MR-RATE/contrastive-pretraining/data/findings_sentences.jsonl
+  reports_csv: /hnvme/workspace/b180dc51-sezgin/MR-RATE-validation/reports/all_reports.csv
+  labels_file: /hnvme/workspace/b180dc51-sezgin/neurovfm_mrrate/splits_neurovfm74/mrrate_neurovfm74_labels.csv
+  splits_csv: /hnvme/workspace/b180dc51-sezgin/neurovfm_mrrate/splits_neurovfm74/splits.csv
+  cached_tokens_dir: artifacts/exact_tokens
+  use_preprocessed: false
+  preprocessed_dir: null
+  normalizer: zscore
+  space: native_space
+
+encoder:
+  name: vjepa2
+  vjepa21_checkpoint: null
+  chunk_size: 64
+  fusion_mode: late
+  pooling_strategy: simple_attn
+  extra_latent_projection: false
+  dim_latent: 512
+
+writer:
+  num_visual_queries: 512
+  resampler_depth: 2
+  resampler_heads: 8
+  lora_r: 16
+  lora_alpha: 32
+  # Covers every normal raw findings report. One corrupted 32k-token outlier
+  # (5NIUCVXWHA) is safely bounded by this ceiling.
+  max_target_tokens: 1536
+  mil_conditioning: all_classes
+  mil_proposal_dropout: 0.0
+  localization: false
+
+training:
+  epochs: 1
+  batch_size: 1
+  gradient_accumulation: 1
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  checkpoint_every: 500
+  shuffle: true
+  replacement_sampling: false
