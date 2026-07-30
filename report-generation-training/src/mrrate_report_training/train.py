@@ -28,7 +28,7 @@ from .provenance import verify_mil_encoder_provenance
 from .targets import ReportTarget, load_target_index
 
 
-DUMMY_TARGET = ReportTarget("__padding__", ())
+DUMMY_TARGET = ReportTarget("__padding__", "<NONE>")
 _CHECKPOINT_AND_STOP = False
 
 
@@ -190,7 +190,7 @@ def main() -> None:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-    targets = load_target_index(config["data"]["jsonl_file"])
+    targets = load_target_index(config["data"]["reports_csv"])
     mil_head, label_names, thresholds = load_frozen_mil(
         config["mil_checkpoint"],
         config["upstream_root"],

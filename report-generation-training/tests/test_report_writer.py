@@ -56,7 +56,7 @@ def test_prefix_runs_once_and_report_adapter_receives_gradient():
         torch.tensor([[0.2, -0.4, 1.1]]),
         torch.tensor([0.5, 0.5, 0.5]),
         make_report_target(
-            "x", ["There is no hemorrhage.", "A small infarct is present."]
+            "x", "There is no hemorrhage.\nA small infarct is present."
         ),
     )
     output["loss"].backward()
@@ -64,4 +64,3 @@ def test_prefix_runs_once_and_report_adapter_receives_gradient():
     assert len(calls) == 1
     assert llm.lora_report.grad is not None
     assert torch.isfinite(llm.lora_report.grad)
-

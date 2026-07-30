@@ -52,14 +52,14 @@ class TinyLLM(nn.Module):
 
 
 def check_targets() -> None:
-    statements = [
-        "There is no acute intracranial abnormality.",
-        "A chronic infarct is present.",
-        "Cannot exclude hemorrhage.",
-    ]
-    target = make_report_target("s", statements)
-    assert target.statements == tuple(statements)
-    assert target.text == " ".join(statements)
+    findings = (
+        "There is no acute intracranial abnormality.\n"
+        "A chronic infarct is present.\n"
+        "Cannot exclude hemorrhage."
+    )
+    target = make_report_target("s", findings)
+    assert target.findings == findings
+    assert target.text == findings
     assert not hasattr(target, "abnormal")
     assert not hasattr(target, "normal")
 
@@ -104,7 +104,7 @@ def check_cache_and_path_equivalence() -> None:
         targets = {
             value: make_report_target(
                 value,
-                ["There is no abnormality.", "A chronic finding is present."],
+                "There is no abnormality.\nA chronic finding is present.",
             )
             for value in ("a", "b")
         }
@@ -160,7 +160,7 @@ def check_single_writer_update() -> None:
         torch.randn(1, 3),
         torch.full((3,), 0.5),
         make_report_target(
-            "s", ["There is no hemorrhage.", "A small infarct is present."]
+            "s", "There is no hemorrhage.\nA small infarct is present."
         ),
     )
     losses["loss"].backward()
@@ -255,4 +255,3 @@ if __name__ == "__main__":
     check_single_writer_update()
     check_strict_weight_and_provenance_loading()
     print("single-writer smoke checks: PASS")
-

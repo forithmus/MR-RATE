@@ -107,18 +107,18 @@ def write_dummy_cache(root: Path) -> tuple[dict, list[torch.Tensor], list[str]]:
     targets = {
         subject_ids[0]: make_report_target(
             subject_ids[0],
-            ["There is no hemorrhage.", "A small chronic infarct is present."],
+            "There is no hemorrhage.\nA small chronic infarct is present.",
         ),
         subject_ids[1]: make_report_target(
-            subject_ids[1], ["There is no acute intracranial abnormality."]
+            subject_ids[1], "There is no acute intracranial abnormality."
         ),
         subject_ids[2]: make_report_target(
             subject_ids[2],
-            ["Possible demyelinating lesion is present.", "The ventricles are normal."],
+            "Possible demyelinating lesion is present.\nThe ventricles are normal.",
         ),
         subject_ids[3]: make_report_target(
             subject_ids[3],
-            ["Postoperative change is present.", "There is no hydrocephalus."],
+            "Postoperative change is present.\nThere is no hydrocephalus.",
         ),
     }
     return targets, [torch.from_numpy(value.copy()) for value in bags], label_names

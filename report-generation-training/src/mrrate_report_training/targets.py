@@ -1,69 +1,69 @@
 from __future__ import annotations
 
-import json
+import csv
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 
-_SPACE = re.compile(r"\s+")
+_INLINE_SPACE = re.compile(r"[^\S\n]+")
 
 
-def clean_statement(value: object) -> str:
-    return _SPACE.sub(" ", str(value or "")).strip()
+def clean_findings(value: object) -> str:
+    """Normalize whitespace while retaining report line boundaries."""
+
+    lines = []
+    for line in str(value or "").splitlines():
+        cleaned = _INLINE_SPACE.sub(" ", line).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
 class ReportTarget:
-    """All source findings in their original order, with no inferred labels."""
+    """Natural findings text from all_reports.csv; no inferred labels."""
 
     subject_id: str
-    statements: tuple[str, ...]
+    findings: str
 
     @property
     def text(self) -> str:
-        return " ".join(self.statements) if self.statements else "<NONE>"
+        return self.findings
 
     def validate(self) -> None:
         if not self.subject_id:
             raise ValueError("subject_id cannot be empty")
-        if any(not value for value in self.statements):
-            raise ValueError(f"{self.subject_id}: report contains an empty statement")
+        if not self.findings:
+            raise ValueError(f"{self.subject_id}: findings cannot be empty")
 
 
-def make_report_target(
-    subject_id: str, statements: Iterable[object]
-) -> ReportTarget:
-    target = ReportTarget(
-        str(subject_id),
-        tuple(text for value in statements if (text := clean_statement(value))),
-    )
+def make_report_target(subject_id: str, findings: object) -> ReportTarget:
+    target = ReportTarget(str(subject_id), clean_findings(findings))
     target.validate()
     return target
 
 
 def load_target_index(path: str | Path) -> dict[str, ReportTarget]:
+    """Load natural report findings keyed by study_uid."""
+
     targets: dict[str, ReportTarget] = {}
-    with Path(path).open() as handle:
-        for line_number, line in enumerate(handle, 1):
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            subject_id = clean_statement(
-                row.get("volume_name") or row.get("study_uid") or row.get("subject_id")
-            )
+    with Path(path).open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"study_uid", "findings"}
+        missing = required.difference(reader.fieldnames or ())
+        if missing:
+            raise ValueError(f"{path}: missing columns {sorted(missing)}")
+        for line_number, row in enumerate(reader, 2):
+            subject_id = str(row["study_uid"]).strip()
             if not subject_id:
-                raise ValueError(f"{path}:{line_number}: missing study identifier")
+                raise ValueError(f"{path}:{line_number}: missing study_uid")
             if subject_id in targets:
                 raise ValueError(f"{path}:{line_number}: duplicate {subject_id}")
-            statements = row.get("extracted_sentences")
-            if not isinstance(statements, list):
-                raise ValueError(
-                    f"{path}:{line_number}: extracted_sentences must be a list"
-                )
-            targets[subject_id] = make_report_target(subject_id, statements)
+            findings = clean_findings(row.get("findings"))
+            if not findings:
+                continue
+            targets[subject_id] = ReportTarget(subject_id, findings)
     if not targets:
-        raise ValueError(f"No report targets found in {path}")
+        raise ValueError(f"No report findings found in {path}")
     return targets
-

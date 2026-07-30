@@ -10,6 +10,7 @@ llm_path: /hnvme/data/LLM-TZ/hub/models--google--gemma-3-12b-it/snapshots/96b6f1
 data:
   data_folder: /hnvme/workspace/b180dc51-sezgin/MR-RATE-validation/mri
   jsonl_file: /hnvme/workspace/b180dc51-sezgin/MR-RATE/contrastive-pretraining/data/findings_sentences.jsonl
+  reports_csv: /hnvme/workspace/b180dc51-sezgin/MR-RATE-validation/reports/all_reports.csv
   labels_file: /hnvme/workspace/b180dc51-sezgin/neurovfm_mrrate/splits_neurovfm74/mrrate_neurovfm74_labels.csv
   splits_csv: /hnvme/workspace/b180dc51-sezgin/neurovfm_mrrate/splits_neurovfm74/splits.csv
   cached_tokens_dir: artifacts/exact_tokens
@@ -33,7 +34,9 @@ writer:
   resampler_heads: 8
   lora_r: 16
   lora_alpha: 32
-  max_target_tokens: 384
+  # Covers every normal raw findings report. One corrupted 32k-token outlier
+  # (5NIUCVXWHA) is safely bounded by this ceiling.
+  max_target_tokens: 1536
   mil_conditioning: all_classes
   mil_proposal_dropout: 0.0
   localization: false

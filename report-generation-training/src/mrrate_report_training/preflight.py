@@ -18,13 +18,14 @@ def check(config: dict, mode: str) -> dict:
         "mil_checkpoint": Path(config["mil_checkpoint"]),
         "llm_path": Path(config["llm_path"]),
         "jsonl_file": Path(config["data"]["jsonl_file"]),
+        "reports_csv": Path(config["data"]["reports_csv"]),
         "labels_file": Path(config["data"]["labels_file"]),
         "splits_csv": Path(config["data"]["splits_csv"]),
     }
     missing = {name: str(path) for name, path in required.items() if not path.exists()}
     if missing:
         raise FileNotFoundError(f"Missing configured artifacts: {missing}")
-    targets = load_target_index(required["jsonl_file"])
+    targets = load_target_index(required["reports_csv"])
     _, labels, thresholds = load_frozen_mil(
         required["mil_checkpoint"],
         required["upstream_root"],
@@ -33,11 +34,8 @@ def check(config: dict, mode: str) -> dict:
     result = {
         "mode": mode,
         "report_targets": len(targets),
-        "report_statements": sum(
-            len(value.statements) for value in targets.values()
-        ),
-        "empty_report_targets": sum(
-            not value.statements for value in targets.values()
+        "findings_characters": sum(
+            len(value.findings) for value in targets.values()
         ),
         "mil_classes": len(labels),
         "mil_thresholds": int(thresholds.numel()),

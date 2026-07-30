@@ -38,7 +38,7 @@ def make_cache(root, max_tokens=0):
 def test_exact_cache_preserves_online_tokens(tmp_path):
     online = make_cache(tmp_path)
     targets = {
-        value: make_report_target(value, ["There is no abnormality."])
+        value: make_report_target(value, "There is no abnormality.")
         for value in ("a", "b")
     }
     cached = ExactRaggedTokenDataset(
@@ -55,7 +55,7 @@ def test_exact_cache_preserves_online_tokens(tmp_path):
 def test_capped_cache_is_rejected(tmp_path):
     make_cache(tmp_path, max_tokens=100)
     targets = {
-        value: make_report_target(value, ["There is no abnormality."])
+        value: make_report_target(value, "There is no abnormality.")
         for value in ("a", "b")
     }
     with pytest.raises(ValueError, match="max_tokens_per_study=0"):

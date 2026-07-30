@@ -3,9 +3,11 @@
 This is a standalone report-generation training layer for MR-RATE. It does not
 modify FORA or an existing MR-RATE checkout.
 
-The target is the complete ordered list of `extracted_sentences` supplied by
-MR-RATE. The trainer does not infer abnormal/healthy labels, split reports into
-subtasks, or fabricate supervision that is absent from the dataset.
+The writer target is the natural `findings` field from
+`MR-RATE-validation/reports/all_reports.csv`. The standardized
+`findings_sentences.jsonl` remains an encoder/MIL data dependency only; it is
+never used as report-generation supervision. The trainer does not infer
+abnormal/healthy labels or split reports into artificial subtasks.
 
 The two execution modes are deliberately equivalent:
 
@@ -21,13 +23,17 @@ are soft conditioning context; they are not report targets.
 
 ## Intentional training policy
 
-- One source-grounded report target per study, preserving statement order.
+- One source-grounded raw findings target per study, preserving line order.
+- Raw findings cover all 97,896 split IDs. The encoder/MIL-compatible cohort is
+  the same 97,887 studies retained by upstream MR-RATE's JSONL loader.
 - Natural one-pass coverage: every train study occurs exactly once per epoch.
 - No replacement sampler and no pathology oversampling.
 - No MIL proposal dropout.
 - No localization target, localization token, or localization loss.
 - No MR-specific disease loss.
-- Empty source findings use the explicit target `<NONE>`.
+- The 1,536-token target ceiling preserves every normal findings report. It
+  bounds one corrupted 32k-token outlier (`5NIUCVXWHA`) containing embedded
+  editing dialogue.
 - The encoder and MIL head are frozen.
 - Exact cached training rejects `max_tokens_per_study != 0`.
 - Startup requires the encoder SHA-256 and configuration recorded by MIL
@@ -41,7 +47,8 @@ Set paths in `configs/base.yaml`:
 1. MR-RATE pretraining checkpoint used by the trained MIL model.
 2. The corresponding `mil_head.pt`.
 3. A local Gemma 3 model.
-4. The MR-RATE extracted-findings JSONL, labels CSV, and splits CSV.
+4. `all_reports.csv`, plus the MR-RATE JSONL, labels CSV, and splits CSV used
+   to reconstruct the frozen encoder/MIL cohort.
 5. For cached mode, `token_features_{split}.json` plus its ragged memmap files.
 
 Preflight rejects pooled features, token-capped caches, mismatched
@@ -88,9 +95,8 @@ preprocessing, encodes it, and removes the extraction.
 python tests/smoke_checks.py
 ```
 
-The tests cover complete ordered targets, strict cache validation,
+The tests cover natural findings targets, strict cache validation,
 online/cached numerical equivalence, frozen MIL behavior, single-prefix
 construction, optimizer updates, strict weight provenance, and checkpoint
 resume. `scripts/synthetic_gpu_e2e.sbatch` runs the integration gate on a
 Slurm GPU with a deterministic dummy dataset.
-
