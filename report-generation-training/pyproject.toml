@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mrrate-report-training"
+version = "0.1.0"
+description = "Exact online and cached single-writer report training for MR-RATE"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pyyaml",
+  "torch",
+  "transformers",
+  "peft",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
