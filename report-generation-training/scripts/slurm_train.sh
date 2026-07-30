@@ -26,9 +26,11 @@ MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)"
 export MASTER_PORT="${MASTER_PORT:-29541}"
 export MODE CONFIG LLM_PATH ENCODER_CHECKPOINT MIL_CHECKPOINT
 export GPUS_PER_NODE="${GPUS_PER_NODE:-4}"
+export MAX_STUDIES="${MAX_STUDIES:-0}"
+export MAX_UPDATES="${MAX_UPDATES:-0}"
+export RESUME="${RESUME:-}"
 
 exec srun --nodes="$SLURM_NNODES" --ntasks="$SLURM_NNODES" --ntasks-per-node=1 \
   --kill-on-bad-exit=1 \
   singularity exec --nv -B /hnvme:/hnvme,/tmp:/tmp "$sif" \
   bash "$project_dir/scripts/train_node.sh"
-

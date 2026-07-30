@@ -61,4 +61,10 @@ command=(python -m torch.distributed.run \
 if [[ -n "${RESUME:-}" ]]; then
   command+=(--resume "$RESUME")
 fi
+if [[ "${MAX_STUDIES:-0}" -gt 0 ]]; then
+  command+=(--max-studies "$MAX_STUDIES")
+fi
+if [[ "${MAX_UPDATES:-0}" -gt 0 ]]; then
+  command+=(--max-updates "$MAX_UPDATES")
+fi
 exec "${command[@]}"

@@ -48,7 +48,6 @@ training:
   learning_rate: 0.0001
   weight_decay: 0.01
   warmup_ratio: 0.03
-  num_workers: 2
   checkpoint_every: 500
   shuffle: true
   replacement_sampling: false
