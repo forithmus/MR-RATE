@@ -21,25 +21,6 @@ the full bag, a trainable query resampler makes 512 language-prefix tokens, and
 one Gemma LoRA writer learns the complete findings text. The MIL probabilities
 are soft conditioning context; they are not report targets.
 
-## Intentional training policy
-
-- One source-grounded raw findings target per study, preserving line order.
-- Raw findings cover all 97,896 split IDs. The encoder/MIL-compatible cohort is
-  the same 97,887 studies retained by upstream MR-RATE's JSONL loader.
-- Natural one-pass coverage: every train study occurs exactly once per epoch.
-- No replacement sampler and no pathology oversampling.
-- No MIL proposal dropout.
-- No localization target, localization token, or localization loss.
-- No MR-specific disease loss.
-- The 1,536-token target ceiling preserves every normal findings report. It
-  bounds one corrupted 32k-token outlier (`5NIUCVXWHA`) containing embedded
-  editing dialogue.
-- The encoder and MIL head are frozen.
-- Exact cached training rejects `max_tokens_per_study != 0`.
-- Startup requires the encoder SHA-256 and configuration recorded by MIL
-  training to match. Cached MIL additionally requires the training-cache
-  fingerprint to match the report token cache.
-
 ## Required artifacts
 
 The files have distinct roles:
