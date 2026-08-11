@@ -37,6 +37,9 @@ writer:
   # Covers every normal raw findings report. One corrupted 32k-token outlier
   # (5NIUCVXWHA) is safely bounded by this ceiling.
   max_target_tokens: 1536
+  # all_classes: condition the writer on the frozen MIL class probabilities.
+  # none: no-classification-labels ablation (visual conditioning only; no
+  # MIL head is loaded and mil_checkpoint may stay a placeholder).
   mil_conditioning: all_classes
   mil_proposal_dropout: 0.0
   localization: false

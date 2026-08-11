@@ -179,12 +179,163 @@ position, and per-rank RNG state.
 ## 7. Integration tests
 
 ```bash
-python tests/smoke_checks.py
-sbatch scripts/synthetic_gpu_e2e.sbatch
+python -m pytest tests/          # unit tests (CPU): generation, metrics,
+                                 # extraction, ablation guardrails
+python tests/smoke_checks.py     # dependency-light checks (CPU)
+python tests/e2e_dummy.py        # full generate->extract->evaluate chain on a
+                                 # fabricated 87-pathology dataset (CPU)
+sbatch scripts/synthetic_gpu_e2e.sbatch     # training internals on GPU
+sbatch scripts/gpu_full_stack_e2e.sbatch    # real Gemma+LoRA checkpoint round
+                                            # trip, generate CLI, vLLM label
+                                            # extraction (GPU)
 ```
+
+Further GPU gates (run with `MRRATE_FULLSTACK_DIR` pointing at a
+`gpu_full_stack_e2e` workspace): `tests/gpu_training_e2e.py` runs the real
+`train.py` CLI in both conditioning modes and generates from the ablation
+checkpoint; `tests/gpu_ablation_probe.py` verifies ablation inference and
+cross-mode checkpoint refusal; `tests/gpu_overfit_probe.py` overfits the
+writer on the dummy studies and checks generation reproduces each study's
+own report (plus cached-vs-uncached decode equality).
 
 The tests cover natural findings targets, strict cache validation,
 online/cached numerical equivalence, frozen MIL behavior, single-prefix
 construction, optimizer updates, strict weight provenance, and checkpoint
-resume. The Slurm test uses a deterministic dummy dataset and does not replace
+resume. The Slurm tests use deterministic dummy datasets and do not replace
 the required real-data smoke.
+
+## 8. Inference: generate reports for validation/test
+
+Build the exact token cache for the target split first (or use online mode):
+
+```bash
+export MRRATE_REPORT_CONFIG="$PROJECT/configs/my_run.yaml"
+bash scripts/build_exact_cache.sh val    # and/or test
+```
+
+Then, on an allocated GPU node:
+
+```bash
+bash scripts/generate_reports.sh cached val configs/my_run.yaml \
+  runs/mrrate_single_writer_v1/last.pt
+bash scripts/generate_reports.sh cached test configs/my_run.yaml \
+  runs/mrrate_single_writer_v1/last.pt
+```
+
+This runs `python -m mrrate_report_training.generate`, which rebuilds the
+exact training prefix (visual token bag -> query resampler, frozen MIL
+conditioning tokens, report prompt), loads the trainable checkpoint state
+with strict schema checks, and decodes greedily with the KV cache. Output is
+`runs/generated_<split>.csv` with columns `study_uid, findings_gt,
+findings_pred` plus a `.meta.json` provenance sidecar. Use `--mode online`
+to encode volumes on the fly, `--max-new-tokens` to bound decoding, and
+`--num-shards/--shard-index` to split a large set across independent GPU
+jobs — each shard automatically writes its own
+`...shardNNofMM.csv` (the evaluator accepts multiple CSVs). A preempted or
+killed job can be requeued with `--resume` to append only missing studies;
+an existing non-empty output is otherwise refused unless `--overwrite` is
+given.
+
+## 9. Evaluation: clinical accuracy and NLG metrics
+
+Clinical accuracy re-extracts pathology labels from the generated reports
+with the same three-step LLM pipeline used to build the ground-truth labels
+(`data-preprocessing/.../06_pathology_classification`), then compares them
+against the ground-truth labels CSV. The schema is defined entirely by the
+pathologies JSON / labels CSV headers, so the full extracted pathology set
+(e.g. 87 classes) works unchanged. On a GPU node with vLLM and the
+classifier model available:
+
+```bash
+export GENERATED_CSV="runs/generated_test.csv"
+export PATHOLOGIES_JSON=/path/to/pathologies.json
+export OUTPUT_CSV="runs/pred_labels_test.csv"
+export WORK_DIR="runs/label_extraction_test"
+sbatch scripts/slurm_extract_labels.sh
+```
+
+Empty generated reports receive all-zero labels. The `keyword` backend of
+`extract_labels` is a deterministic name/synonym matcher for tests only.
+
+Finally, compute all metrics (no GPU needed):
+
+```bash
+python -m mrrate_report_training.evaluate_reports \
+  --generated-csv runs/generated_test.csv \
+  --gt-labels /path/to/mrrate_labels.csv \
+  --pred-labels runs/pred_labels_test.csv \
+  --output-dir runs/eval_test
+```
+
+Outputs: `metrics.json` (corpus BLEU-1..4, ROUGE-1/2/L F1, METEOR when nltk
+wordnet data is present, plus the clinical summary), `per_pathology_metrics.csv`
+(per-pathology TP/FP/TN/FN, sensitivity, specificity, precision, NPV, F1,
+accuracy, balanced accuracy, prevalence), and `nlg_per_sample.csv`. The
+clinical summary reports macro / micro / positive-support-weighted
+aggregates, subset accuracy, and Hamming accuracy; undefined ratios (e.g.
+specificity of a pathology with no negative studies) are null and excluded
+from macro averages. Omit `--pred-labels` to score NLG only.
+
+The CPU-runnable end-to-end trial of this whole chain on a fabricated
+87-pathology dummy dataset:
+
+```bash
+python tests/e2e_dummy.py
+```
+
+## 10. Ablation: no classification-label conditioning
+
+`writer.mil_conditioning` selects what the language model is conditioned on:
+
+| | `all_classes` (default) | `none` (ablation) |
+| --- | --- | --- |
+| LLM prefix | `image_start` + visual query tokens + `image_end` + **74 MIL class tokens** + report prompt | `image_start` + visual query tokens + `image_end` + report prompt |
+| Classification labels | One token per MIL class: label-name embedding + projected (probability, probability − threshold) from the frozen MIL head | **Not present — image visuals only** |
+| MIL head / `mil_checkpoint` | Loaded frozen, verified against the encoder | Never loaded; `mil_checkpoint` may stay a placeholder |
+| Report supervision | Natural `findings` text (identical in both modes) | Natural `findings` text (identical in both modes) |
+
+To run the ablation experiment, make two configs that differ ONLY in
+`mil_conditioning` and `output_dir`, train both, and evaluate both on the
+same splits and metrics:
+
+```bash
+cp configs/my_run.yaml configs/my_run_ablation.yaml
+# in configs/my_run_ablation.yaml set:
+#   writer.mil_conditioning: none
+#   output_dir: runs/mrrate_single_writer_ablation_v1
+
+GPUS_PER_NODE=4 bash scripts/train_cached.sh configs/my_run.yaml
+GPUS_PER_NODE=4 bash scripts/train_cached.sh configs/my_run_ablation.yaml
+
+bash scripts/generate_reports.sh cached test configs/my_run.yaml \
+  runs/mrrate_single_writer_v1/last.pt
+bash scripts/generate_reports.sh cached test configs/my_run_ablation.yaml \
+  runs/mrrate_single_writer_ablation_v1/last.pt
+# then sections 9's extraction + evaluate_reports for each generated CSV;
+# the metric deltas are the measured contribution of class conditioning.
+```
+
+Everything else is unchanged: both training modes (`online`/`cached`),
+preflight, resume, sharded generation with `--resume`, and the evaluation
+pipeline work identically, so ablation and full runs are directly comparable
+on the same clinical accuracy and NLG metrics. Preflight/training/generation
+skip the MIL artifacts and MIL provenance checks in `none` mode (encoder
+loading verification still applies to online encoding).
+
+Safety rails: an ablation writer refuses MIL inputs (and a full writer
+refuses their absence); ablation checkpoints contain no
+`label_embeddings`/`mil_*` tensors and carry a `mil_conditioning` stamp, so
+loading an ablation checkpoint into a full-conditioning model — or a full
+checkpoint (including pre-ablation ones, which default to `all_classes`)
+into an ablation model — fails loudly instead of generating from
+mismatched weights.
+
+Tested by `tests/test_mil_ablation.py` (prefix composition, loss/decoding
+without MIL, all mode-mixup errors, cross-mode checkpoint refusal in both
+directions, config validation) and by `tests/gpu_ablation_probe.py`, a GPU
+gate that trains and decodes the real Gemma writer in `none` mode through
+the actual `generate.py` CLI and asserts a full-conditioning checkpoint is
+refused. `tests/e2e_dummy.py` additionally runs an ablation writer through
+checkpoint load, generation, label extraction, and the full per-pathology
+clinical evaluation, asserting all classes are scored for ablation output
+exactly as for full-conditioning output.

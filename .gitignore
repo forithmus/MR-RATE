@@ -35,3 +35,4 @@ data-preprocessing/logs/*
 
 # macOS
 .DS_Store
+runs/

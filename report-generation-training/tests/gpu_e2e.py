@@ -180,13 +180,18 @@ def main() -> None:
         expected_dim=512,
         expected_label_names=label_names,
     )
-    mil = build_mil(
-        Path(
+    upstream = Path(
+        os.environ.get(
+            "MRRATE_UPSTREAM_ROOT",
+            Path(__file__).resolve().parents[2] / "contrastive-pretraining",
+        )
+    )
+    if not (upstream / "scripts" / "mil_probe.py").exists():
+        upstream = Path(
             "/hnvme/workspace/b180dc51-sezgin/"
             "MR-RATE-linearprobe/contrastive-pretraining"
-        ),
-        device,
-    )
+        )
+    mil = build_mil(upstream, device)
     thresholds = torch.full((74,), 0.5, device=device)
     writer = build_writer(device)
 

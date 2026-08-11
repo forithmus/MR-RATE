@@ -81,19 +81,22 @@ def cosine_schedule(
 
 
 def rng_state() -> dict:
-    return {
+    state = {
         "python": random.getstate(),
         "numpy": np.random.get_state(),
         "torch": torch.get_rng_state(),
-        "cuda": torch.cuda.get_rng_state(),
     }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state()
+    return state
 
 
 def restore_rng(state: dict) -> None:
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
     torch.set_rng_state(state["torch"])
-    torch.cuda.set_rng_state(state["cuda"])
+    if torch.cuda.is_available() and "cuda" in state:
+        torch.cuda.set_rng_state(state["cuda"])
 
 
 def save_checkpoint(
@@ -191,13 +194,19 @@ def main() -> None:
     torch.backends.cudnn.allow_tf32 = True
 
     targets = load_target_index(config["data"]["reports_csv"])
-    mil_head, label_names, thresholds = load_frozen_mil(
-        config["mil_checkpoint"],
-        config["upstream_root"],
-        expected_dim=int(config["encoder"]["dim_latent"]),
-    )
-    mil_head.to(device).eval()
-    thresholds = thresholds.to(device)
+    mil_mode = str(config["writer"].get("mil_conditioning", "all_classes"))
+    if mil_mode == "none":
+        # No-classification-labels ablation: the writer is conditioned on
+        # visual tokens only; no MIL head is loaded or evaluated.
+        mil_head, label_names, thresholds = None, [], None
+    else:
+        mil_head, label_names, thresholds = load_frozen_mil(
+            config["mil_checkpoint"],
+            config["upstream_root"],
+            expected_dim=int(config["encoder"]["dim_latent"]),
+        )
+        mil_head.to(device).eval()
+        thresholds = thresholds.to(device)
 
     online_source = None
     if args.mode == "cached":
@@ -206,7 +215,7 @@ def main() -> None:
             "train",
             targets,
             expected_dim=int(config["encoder"]["dim_latent"]),
-            expected_label_names=label_names,
+            expected_label_names=label_names if mil_mode == "all_classes" else None,
         )
         subject_ids = source.subject_ids
     else:
@@ -221,12 +230,17 @@ def main() -> None:
     cache_metadata = source.metadata if args.mode == "cached" else None
     if rank == 0:
         try:
-            provenance_result = verify_mil_encoder_provenance(
-                config["mil_checkpoint"],
-                config["encoder_checkpoint"],
-                config["encoder"],
-                cache_metadata=cache_metadata,
-            )
+            if mil_mode == "none":
+                provenance_result = {
+                    "skipped": "mil_conditioning=none has no MIL provenance"
+                }
+            else:
+                provenance_result = verify_mil_encoder_provenance(
+                    config["mil_checkpoint"],
+                    config["encoder_checkpoint"],
+                    config["encoder"],
+                    cache_metadata=cache_metadata,
+                )
             provenance_message = {"ok": True, "result": provenance_result}
         except Exception as error:
             provenance_message = {
@@ -254,13 +268,17 @@ def main() -> None:
         source_length = min(source_length, int(args.max_studies))
 
     writer_config = config["writer"]
-    llm, tokenizer, _ = build_gemma_writer(
+    llm, tokenizer, hidden_size = build_gemma_writer(
         config["llm_path"],
         device,
         lora_r=int(writer_config["lora_r"]),
         lora_alpha=int(writer_config["lora_alpha"]),
     )
-    semantics = label_semantic_embeddings(llm, tokenizer, label_names)
+    semantics = (
+        label_semantic_embeddings(llm, tokenizer, label_names)
+        if mil_mode == "all_classes"
+        else None
+    )
     model = ReportWriter(
         llm,
         tokenizer,
@@ -270,6 +288,8 @@ def main() -> None:
         resampler_depth=int(writer_config["resampler_depth"]),
         resampler_heads=int(writer_config["resampler_heads"]),
         max_target_tokens=int(writer_config["max_target_tokens"]),
+        mil_conditioning=mil_mode,
+        llm_dim=hidden_size if mil_mode == "none" else None,
     ).to(device)
     trainable = [value for value in model.parameters() if value.requires_grad]
     optimizer = torch.optim.AdamW(
@@ -308,6 +328,7 @@ def main() -> None:
                     "slots_per_rank": slots_per_epoch,
                     "epochs": epochs,
                     "visual_queries": writer_config["num_visual_queries"],
+                    "mil_conditioning": mil_mode,
                     "mil_classes": len(label_names),
                     "localization": False,
                     "replacement_sampling": False,
@@ -352,8 +373,11 @@ def main() -> None:
                     device=device,
                 )
                 target = DUMMY_TARGET
-            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-                mil_logits = infer_mil(mil_head, tokens)
+            if mil_head is None:
+                mil_logits = None
+            else:
+                with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+                    mil_logits = infer_mil(mil_head, tokens)
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 losses = model(
                     tokens,
@@ -416,7 +440,9 @@ def main() -> None:
                     break
             if online_source is not None:
                 verify_frozen_encoder(online_source)
-            if any(parameter.grad is not None for parameter in mil_head.parameters()):
+            if mil_head is not None and any(
+                parameter.grad is not None for parameter in mil_head.parameters()
+            ):
                 raise RuntimeError("Frozen MIL head accumulated gradients")
         start_slot = 0
         if stop:

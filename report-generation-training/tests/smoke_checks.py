@@ -173,11 +173,24 @@ def check_single_writer_update() -> None:
     assert lora_names == ["lora_report"]
 
 
-def check_strict_weight_and_provenance_loading() -> None:
-    upstream = Path(
-        "/hnvme/workspace/b180dc51-sezgin/"
-        "MR-RATE-linearprobe/contrastive-pretraining"
+def resolve_upstream_root() -> Path:
+    import os
+
+    candidates = [
+        os.environ.get("MRRATE_UPSTREAM_ROOT"),
+        Path(__file__).resolve().parents[2] / "contrastive-pretraining",
+        "/hnvme/workspace/b180dc51-sezgin/MR-RATE-linearprobe/contrastive-pretraining",
+    ]
+    for candidate in candidates:
+        if candidate and (Path(candidate) / "scripts" / "mil_probe.py").exists():
+            return Path(candidate)
+    raise FileNotFoundError(
+        "No upstream contrastive-pretraining checkout with scripts/mil_probe.py"
     )
+
+
+def check_strict_weight_and_provenance_loading() -> None:
+    upstream = resolve_upstream_root()
     sys.path.insert(0, str(upstream / "scripts"))
     from mil_probe import ClassifyThenAggregate
 

@@ -223,19 +223,35 @@ class ReportWriter(nn.Module):
         self,
         llm: nn.Module,
         tokenizer,
-        label_embeddings: torch.Tensor,
+        label_embeddings: torch.Tensor | None,
         *,
         visual_dim: int = 512,
         num_visual_queries: int = 512,
         resampler_depth: int = 2,
         resampler_heads: int = 8,
         max_target_tokens: int = 384,
+        mil_conditioning: str = "all_classes",
+        llm_dim: int | None = None,
     ) -> None:
         super().__init__()
+        if mil_conditioning not in ("all_classes", "none"):
+            raise ValueError(f"Unknown mil_conditioning: {mil_conditioning!r}")
         self.llm = llm
         self.tokenizer = tokenizer
         self.max_target_tokens = int(max_target_tokens)
-        llm_dim = int(label_embeddings.shape[1])
+        self.mil_conditioning = mil_conditioning
+        if mil_conditioning == "all_classes":
+            if label_embeddings is None:
+                raise ValueError("all_classes conditioning requires label embeddings")
+            llm_dim = int(label_embeddings.shape[1])
+        else:
+            if label_embeddings is not None:
+                raise ValueError(
+                    "mil_conditioning=none must not receive label embeddings"
+                )
+            if not llm_dim:
+                raise ValueError("mil_conditioning=none requires an explicit llm_dim")
+            llm_dim = int(llm_dim)
         self.resampler = QueryResampler(
             visual_dim, num_visual_queries, resampler_depth, resampler_heads
         )
@@ -244,23 +260,36 @@ class ReportWriter(nn.Module):
         )
         self.image_start = nn.Parameter(torch.randn(1, 1, llm_dim) * 0.02)
         self.image_end = nn.Parameter(torch.randn(1, 1, llm_dim) * 0.02)
-        self.register_buffer(
-            "label_embeddings", label_embeddings.float(), persistent=True
-        )
-        self.mil_value_projection = nn.Sequential(
-            nn.Linear(2, 64), nn.GELU(), nn.Linear(64, llm_dim)
-        )
-        self.mil_norm = nn.LayerNorm(llm_dim)
+        if mil_conditioning == "all_classes":
+            self.register_buffer(
+                "label_embeddings", label_embeddings.float(), persistent=True
+            )
+            self.mil_value_projection = nn.Sequential(
+                nn.Linear(2, 64), nn.GELU(), nn.Linear(64, llm_dim)
+            )
+            self.mil_norm = nn.LayerNorm(llm_dim)
 
     def shared_prefix(
         self,
         tokens: torch.Tensor,
-        mil_logits: torch.Tensor,
-        thresholds: torch.Tensor,
+        mil_logits: torch.Tensor | None,
+        thresholds: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         tokens = tokens.to(self.image_start.dtype)
         visual = self.visual_projection(self.resampler(tokens))
         visual_prefix = torch.cat((self.image_start, visual, self.image_end), dim=1)
+        if self.mil_conditioning == "none":
+            # No-classification-labels ablation: the writer sees visual
+            # evidence only. Passing MIL inputs here indicates a mode mixup.
+            if mil_logits is not None or thresholds is not None:
+                raise ValueError(
+                    "mil_conditioning=none writer received MIL conditioning"
+                )
+            return visual_prefix, visual_prefix.new_zeros(
+                (1, 0, visual_prefix.shape[-1])
+            )
+        if mil_logits is None or thresholds is None:
+            raise ValueError("all_classes conditioning requires MIL logits")
         probability = mil_logits.sigmoid().reshape(-1)
         thresholds = thresholds.to(probability).reshape(-1)
         if probability.numel() != self.label_embeddings.shape[0]:
@@ -314,11 +343,92 @@ class ReportWriter(nn.Module):
         logits = outputs.logits[:, :-1].float()
         return F.cross_entropy(logits.reshape(-1, logits.shape[-1]), target_ids)
 
+    @torch.no_grad()
+    def generate(
+        self,
+        tokens: torch.Tensor,
+        mil_logits: torch.Tensor | None,
+        thresholds: torch.Tensor | None,
+        *,
+        max_new_tokens: int | None = None,
+        use_cache: bool = True,
+    ) -> str:
+        """Greedy findings decoding from the same prefix used during training.
+
+        The KV cache is used when the language model returns one; duck-typed
+        test models without a cache fall back to full-sequence recomputation.
+        ``use_cache=False`` forces the full-recompute path (each step is then
+        numerically identical to a truncated training forward), which is
+        useful to cross-check cached decoding.
+        """
+
+        if self.training:
+            raise RuntimeError("generate() requires eval mode")
+        activate_adapter(self.llm, "report")
+        visual_prefix, mil_tokens = self.shared_prefix(tokens, mil_logits, thresholds)
+        prompt_ids = self._token_ids(self.REPORT_PROMPT, append_eos=False)
+        embedding = self.llm.get_input_embeddings()
+        prefix = torch.cat(
+            (visual_prefix, mil_tokens, embedding(prompt_ids).unsqueeze(0)), dim=1
+        )
+        conditioning_length = visual_prefix.shape[1] + mil_tokens.shape[1]
+        limit = int(max_new_tokens) if max_new_tokens else self.max_target_tokens
+        if limit <= 0:
+            raise ValueError("max_new_tokens must be positive")
+        stop_ids = {int(self.tokenizer.eos_token_id)}
+        # Gemma3-IT declares two stop ids (<eos> and <end_of_turn>); the base
+        # weights favor <end_of_turn>, so honor both. Training never targets
+        # <end_of_turn>, which makes the extra stop loss-free.
+        convert = getattr(self.tokenizer, "convert_tokens_to_ids", None)
+        if convert is not None:
+            end_of_turn = convert("<end_of_turn>")
+            if isinstance(end_of_turn, int) and end_of_turn >= 0:
+                stop_ids.add(end_of_turn)
+        generated: list[int] = []
+        inputs = prefix
+        past = None
+        for _ in range(limit):
+            length = prefix.shape[1] + len(generated)
+            attention_mask = torch.ones(
+                1, length, dtype=torch.long, device=inputs.device
+            )
+            token_type_ids = torch.zeros(
+                1, inputs.shape[1], dtype=torch.long, device=inputs.device
+            )
+            if inputs.shape[1] == length:
+                token_type_ids[:, :conditioning_length] = 1
+            keyword_arguments = dict(
+                inputs_embeds=inputs,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                use_cache=bool(use_cache),
+                logits_to_keep=1,
+            )
+            if past is not None:
+                keyword_arguments["past_key_values"] = past
+            outputs = self.llm(**keyword_arguments)
+            next_id = int(outputs.logits[0, -1].float().argmax())
+            if next_id in stop_ids:
+                break
+            generated.append(next_id)
+            next_ids = torch.tensor(
+                [[next_id]], dtype=torch.long, device=inputs.device
+            )
+            past = (
+                getattr(outputs, "past_key_values", None) if use_cache else None
+            )
+            next_embedding = embedding(next_ids[0]).unsqueeze(0)
+            if past is None:
+                inputs = torch.cat((inputs, next_embedding), dim=1)
+            else:
+                inputs = next_embedding
+        return self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+
     def forward(
         self,
         tokens: torch.Tensor,
-        mil_logits: torch.Tensor,
-        thresholds: torch.Tensor,
+        mil_logits: torch.Tensor | None,
+        thresholds: torch.Tensor | None,
         target: ReportTarget,
         *,
         loss_scale: float = 1.0,
@@ -337,8 +447,10 @@ class ReportWriter(nn.Module):
 def trainable_state_dict(module: nn.Module) -> dict[str, torch.Tensor]:
     trainable = {name for name, value in module.named_parameters() if value.requires_grad}
     # label_embeddings are deterministic but retaining them makes class-schema
-    # drift immediately visible during resume.
-    trainable.add("label_embeddings")
+    # drift immediately visible during resume. Absent under the
+    # mil_conditioning=none ablation.
+    if "label_embeddings" in module.state_dict():
+        trainable.add("label_embeddings")
     return {
         name: value.detach().cpu()
         for name, value in module.state_dict().items()

@@ -24,6 +24,11 @@ def load_config(path: str | Path) -> dict:
 def require_training_policy(config: dict) -> None:
     writer = config["writer"]
     training = config["training"]
+    if writer.get("mil_conditioning", "all_classes") not in ("all_classes", "none"):
+        raise ValueError(
+            "mil_conditioning must be all_classes or none "
+            "(none = no-classification-labels ablation)"
+        )
     if float(writer.get("mil_proposal_dropout", -1)) != 0.0:
         raise ValueError("MR-RATE strategy fixes MIL proposal dropout at zero")
     if bool(writer.get("localization", True)):
