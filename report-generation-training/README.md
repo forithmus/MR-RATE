@@ -176,35 +176,7 @@ Keep `MODE`, `CONFIG`, node count, and artifact variables the same. Checkpoints
 contain the resampler/connector, report LoRA, optimizer, scheduler, next data
 position, and per-rank RNG state.
 
-## 7. Integration tests
-
-```bash
-python -m pytest tests/          # unit tests (CPU): generation, metrics,
-                                 # extraction, ablation guardrails
-python tests/smoke_checks.py     # dependency-light checks (CPU)
-python tests/e2e_dummy.py        # full generate->extract->evaluate chain on a
-                                 # fabricated 87-pathology dataset (CPU)
-sbatch scripts/synthetic_gpu_e2e.sbatch     # training internals on GPU
-sbatch scripts/gpu_full_stack_e2e.sbatch    # real Gemma+LoRA checkpoint round
-                                            # trip, generate CLI, vLLM label
-                                            # extraction (GPU)
-```
-
-Further GPU gates (run with `MRRATE_FULLSTACK_DIR` pointing at a
-`gpu_full_stack_e2e` workspace): `tests/gpu_training_e2e.py` runs the real
-`train.py` CLI in both conditioning modes and generates from the ablation
-checkpoint; `tests/gpu_ablation_probe.py` verifies ablation inference and
-cross-mode checkpoint refusal; `tests/gpu_overfit_probe.py` overfits the
-writer on the dummy studies and checks generation reproduces each study's
-own report (plus cached-vs-uncached decode equality).
-
-The tests cover natural findings targets, strict cache validation,
-online/cached numerical equivalence, frozen MIL behavior, single-prefix
-construction, optimizer updates, strict weight provenance, and checkpoint
-resume. The Slurm tests use deterministic dummy datasets and do not replace
-the required real-data smoke.
-
-## 8. Inference: generate reports for validation/test
+## 7. Inference: generate reports for validation/test
 
 Build the exact token cache for the target split first (or use online mode):
 
@@ -236,7 +208,7 @@ killed job can be requeued with `--resume` to append only missing studies;
 an existing non-empty output is otherwise refused unless `--overwrite` is
 given.
 
-## 9. Evaluation: clinical accuracy and NLG metrics
+## 8. Evaluation: clinical accuracy and NLG metrics
 
 Clinical accuracy re-extracts pathology labels from the generated reports
 with the same three-step LLM pipeline used to build the ground-truth labels
@@ -283,7 +255,7 @@ The CPU-runnable end-to-end trial of this whole chain on a fabricated
 python tests/e2e_dummy.py
 ```
 
-## 10. Ablation: no classification-label conditioning
+## 9. Ablation: no classification-label conditioning
 
 `writer.mil_conditioning` selects what the language model is conditioned on:
 
