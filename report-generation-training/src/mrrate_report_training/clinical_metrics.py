@@ -3,7 +3,7 @@
 Compares pathology labels extracted from generated reports against the
 ground-truth pathology labels. The label schema is defined entirely by the
 CSV headers (``study_uid`` followed by one binary column per pathology), so
-the same code serves any schema size — including the 87-pathology set.
+the same code serves any schema size, including the current 74-diagnosis set.
 
 Per pathology: TP/FP/TN/FN, sensitivity (recall), specificity, precision
 (PPV), NPV, F1, accuracy, balanced accuracy, prevalence, and support.

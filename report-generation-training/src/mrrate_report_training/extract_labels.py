@@ -1,24 +1,22 @@
-"""Extract pathology labels from generated reports.
+"""Extract NeuroVFM diagnosis labels from generated reports.
 
-The ``vllm`` backend reuses the repository's LLM pathology-classification
-pipeline (``data-preprocessing/.../06_pathology_classification``) unchanged:
-generated findings are staged as ``batch00_reports.csv``, the three-step
-classifier runs on a GPU node, and ``merge_labels.py`` produces a labels CSV
-with the same schema as the ground-truth labels — one binary column per
-pathology in the supplied pathologies JSON (any schema size, e.g. 87).
+The ``vllm`` backend uses the same NeuroVFM MRI diagnosis extraction prompt,
+74-diagnosis guidance schema, parser, and deterministic Gemma settings used to
+build the current MR-RATE labels. Generated findings are staged as
+``batch00_reports.csv`` and passed to
+``data-preprocessing/.../07_neurovfm_diagnosis_extraction``.
 
 The ``keyword`` backend is a deterministic name/synonym matcher with basic
 negation handling. It exists so unit tests and the dummy end-to-end trial can
 run without a GPU; it is NOT a clinically valid labeler.
 
-Studies with an empty generated report receive all-zero labels (the upstream
-classifier silently drops empty findings rows; an empty report asserts no
-pathology).
+Studies with an empty generated report receive all-zero labels (the extractor
+silently drops empty findings rows; an empty report asserts no diagnosis).
 
 CLI:
     python -m mrrate_report_training.extract_labels \
         --generated-csv generated_val.csv \
-        --pathologies-json pathologies.json \
+        --diagnoses-json neurovfm_mri_diagnoses.json \
         --output-csv pred_labels_val.csv \
         --backend vllm --work-dir runs/label_extraction_val
 """
@@ -27,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -44,7 +43,10 @@ _DEFAULT_CLASSIFIER_DIR = (
     / "src"
     / "mr_rate_preprocessing"
     / "reports_preprocessing"
-    / "06_pathology_classification"
+    / "07_neurovfm_diagnosis_extraction"
+)
+_DEFAULT_DIAGNOSES_JSON = (
+    _DEFAULT_CLASSIFIER_DIR / "data" / "neurovfm_mri_diagnoses.json"
 )
 
 _NEGATIONS = {"no", "not", "without", "absent", "negative", "denies", "denied"}
@@ -52,20 +54,40 @@ _NEGATION_WINDOW = 5
 
 
 def load_pathology_schema(path: str | Path) -> dict[str, list[str]]:
-    """Pathology name -> match phrases (name plus optional 'synonyms')."""
+    """Diagnosis key -> phrases used only by the test-only keyword backend.
+
+    The current extraction schema is ``{"diagnoses": [{"key": ...}]}``. The
+    older ``pathologies`` mapping and simple-list formats remain readable so
+    existing CPU-only fixtures and historical artifacts can still be inspected.
+    """
 
     data = json.loads(Path(path).read_text())
-    entries = data.get("pathologies", data) if isinstance(data, dict) else data
+    if isinstance(data, dict) and "diagnoses" in data:
+        diagnoses = data["diagnoses"]
+        if not isinstance(diagnoses, list):
+            raise ValueError(f"{path}: diagnoses must be a list")
+        entries = {}
+        for diagnosis in diagnoses:
+            if not isinstance(diagnosis, dict) or not str(
+                diagnosis.get("key", "")
+            ).strip():
+                raise ValueError(f"{path}: every diagnosis needs a non-empty key")
+            key = str(diagnosis["key"])
+            if key in entries:
+                raise ValueError(f"{path}: duplicate diagnosis key {key!r}")
+            entries[key] = diagnosis
+    else:
+        entries = data.get("pathologies", data) if isinstance(data, dict) else data
     if isinstance(entries, list):
         entries = {str(name): {} for name in entries}
     if not isinstance(entries, dict) or not entries:
-        raise ValueError(f"{path}: no pathologies found")
+        raise ValueError(f"{path}: no diagnoses found")
     schema: dict[str, list[str]] = {}
     for name, entry in entries.items():
-        phrases = [str(name)]
+        phrases = [str(name), str(name).replace("_", " ")]
         if isinstance(entry, dict):
             phrases.extend(str(value) for value in entry.get("synonyms", ()))
-        schema[str(name)] = phrases
+        schema[str(name)] = list(dict.fromkeys(phrases))
     return schema
 
 
@@ -148,33 +170,80 @@ def _stage_reports(rows: list[dict], work_dir: Path, text_column: str) -> tuple[
     return reports_dir, empty
 
 
+def _resume_labels_dir(
+    rows: list[dict],
+    *,
+    work_dir: Path,
+    text_column: str,
+    diagnoses_json: Path,
+    model_name: str | None,
+    seed: int,
+) -> Path:
+    """Create or validate a resume directory without storing report text."""
+
+    input_hash = hashlib.sha256()
+    for row in rows:
+        input_hash.update(str(row["study_uid"]).encode())
+        input_hash.update(b"\0")
+        input_hash.update(str(row[text_column] or "").encode())
+        input_hash.update(b"\0")
+    manifest = {
+        "format": "mrrate_neurovfm_extraction_v1",
+        "studies": len(rows),
+        "input_sha256": input_hash.hexdigest(),
+        "diagnoses_sha256": hashlib.sha256(diagnoses_json.read_bytes()).hexdigest(),
+        "model": model_name or "google/gemma-4-31B-it",
+        "seed": seed,
+    }
+    labels_dir = work_dir / "labels"
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = work_dir / "extraction_manifest.json"
+    existing_shards = list(labels_dir.glob("labels_rank_*.json"))
+    if existing_shards:
+        if not manifest_path.exists():
+            raise ValueError(
+                f"{labels_dir} contains extraction shards without a manifest; "
+                "use a new --work-dir"
+            )
+        previous = json.loads(manifest_path.read_text())
+        if previous != manifest:
+            raise ValueError(
+                f"{labels_dir} belongs to different reports, diagnoses, model, "
+                "or seed; use a new --work-dir"
+            )
+    else:
+        temporary = manifest_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(manifest, indent=2) + "\n")
+        temporary.replace(manifest_path)
+    return labels_dir
+
+
 def extract_vllm_labels(
     rows: list[dict],
     schema: dict[str, list[str]],
     *,
-    pathologies_json: Path,
+    diagnoses_json: Path,
     work_dir: Path,
     classifier_dir: Path,
     text_column: str,
     model_name: str | None,
     batch_size: int,
     seed: int,
-    max_retries: int,
 ) -> list[dict]:
-    classifier = classifier_dir / "classify_pathologies_parallel.py"
+    classifier = classifier_dir / "extract_neurovfm_dx_gemma.py"
     merger = classifier_dir / "merge_labels.py"
     if not classifier.exists() or not merger.exists():
         raise FileNotFoundError(
-            f"Pathology classifier not found under {classifier_dir}"
+            f"NeuroVFM diagnosis extractor not found under {classifier_dir}"
         )
-    # The upstream classifier requires the structured pathologies format.
-    payload = json.loads(pathologies_json.read_text())
-    if not isinstance(payload, dict) or not isinstance(
-        payload.get("pathologies"), dict
-    ):
+    # Refuse the legacy 37-pathology schema: it belongs to the historical
+    # three-step classifier and does not carry the NeuroVFM diagnosis guidance.
+    payload = json.loads(diagnoses_json.read_text())
+    diagnoses = payload.get("diagnoses") if isinstance(payload, dict) else None
+    if not isinstance(diagnoses, list) or not diagnoses:
         raise ValueError(
-            f"{pathologies_json}: the vllm backend requires the structured "
-            'format {"pathologies": {name: {...}}}'
+            f"{diagnoses_json}: the vllm backend requires the NeuroVFM "
+            'format {"diagnoses": [{"key": ..., "guidance": ...}, ...]}'
         )
     reports_dir, empty = _stage_reports(rows, work_dir, text_column)
     if len(empty) == len(rows):
@@ -182,7 +251,16 @@ def extract_vllm_labels(
             {"study_uid": row["study_uid"], "labels": {name: 0 for name in schema}}
             for row in rows
         ]
-    labels_dir = _fresh_directory(work_dir / "labels")
+    # Keep rank files across requeues; the NeuroVFM extractor resumes globally
+    # by study_uid and checkpoints atomically after every batch.
+    labels_dir = _resume_labels_dir(
+        rows,
+        work_dir=work_dir,
+        text_column=text_column,
+        diagnoses_json=diagnoses_json,
+        model_name=model_name,
+        seed=seed,
+    )
     # The classifier shards by SLURM_PROCID/SLURM_NTASKS at import time; this
     # single subprocess must always see the whole staged CSV.
     environment = {
@@ -196,16 +274,14 @@ def extract_vllm_labels(
         str(classifier),
         "--reports_dir",
         str(reports_dir),
-        "--pathologies_json",
-        str(pathologies_json),
+        "--diagnoses_json",
+        str(diagnoses_json),
         "--output_dir",
         str(labels_dir),
         "--batch_size",
         str(batch_size),
         "--seed",
         str(seed),
-        "--max_retries",
-        str(max_retries),
     ]
     if model_name:
         command.extend(["--model_name", model_name])
@@ -228,7 +304,7 @@ def extract_vllm_labels(
         names = [field for field in reader.fieldnames or () if field != "study_uid"]
         if set(names) != set(schema):
             raise ValueError(
-                "Classifier output schema differs from pathologies JSON"
+                "Classifier output schema differs from diagnoses JSON"
             )
         labeled = [
             {
@@ -252,7 +328,16 @@ def extract_vllm_labels(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--generated-csv", nargs="+", required=True)
-    parser.add_argument("--pathologies-json", required=True)
+    schema_group = parser.add_mutually_exclusive_group()
+    schema_group.add_argument(
+        "--diagnoses-json",
+        help="NeuroVFM diagnoses JSON; defaults to the bundled 74-diagnosis schema",
+    )
+    schema_group.add_argument(
+        "--pathologies-json",
+        dest="diagnoses_json",
+        help="Deprecated alias retained for historical keyword-backend fixtures",
+    )
     parser.add_argument("--output-csv", required=True)
     parser.add_argument("--backend", choices=("vllm", "keyword"), default="vllm")
     parser.add_argument(
@@ -266,14 +351,16 @@ def main() -> None:
         "--classifier-dir", default=str(_DEFAULT_CLASSIFIER_DIR)
     )
     parser.add_argument("--model-name")
-    parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-retries", type=int, default=2)
     args = parser.parse_args()
     rows = load_generated_csv(args.generated_csv)
     if args.text_column not in rows[0]:
         raise ValueError(f"Unknown text column: {args.text_column}")
-    schema = load_pathology_schema(args.pathologies_json)
+    diagnoses_json = Path(
+        args.diagnoses_json or _DEFAULT_DIAGNOSES_JSON
+    ).resolve()
+    schema = load_pathology_schema(diagnoses_json)
     if args.backend == "keyword":
         labeled = extract_keyword_labels(
             rows, schema, text_column=args.text_column
@@ -284,14 +371,13 @@ def main() -> None:
         labeled = extract_vllm_labels(
             rows,
             schema,
-            pathologies_json=Path(args.pathologies_json).resolve(),
+            diagnoses_json=diagnoses_json,
             work_dir=Path(args.work_dir).resolve(),
             classifier_dir=Path(args.classifier_dir).resolve(),
             text_column=args.text_column,
             model_name=args.model_name,
             batch_size=args.batch_size,
             seed=args.seed,
-            max_retries=args.max_retries,
         )
     write_labels_csv(labeled, list(schema), args.output_csv)
     positives = sum(sum(row["labels"].values()) for row in labeled)
@@ -300,7 +386,7 @@ def main() -> None:
             {
                 "backend": args.backend,
                 "studies": len(labeled),
-                "pathologies": len(schema),
+                "diagnoses": len(schema),
                 "positive_labels": positives,
                 "output_csv": str(Path(args.output_csv).resolve()),
             }

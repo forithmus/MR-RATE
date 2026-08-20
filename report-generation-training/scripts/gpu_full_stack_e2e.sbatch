@@ -54,7 +54,7 @@ singularity exec --nv -B /hnvme:/hnvme,/tmp:/tmp "$vllm_sif" bash -lc "
   python3 -m mrrate_report_training.extract_labels \
     --backend vllm \
     --generated-csv $workspace/generated_test.csv \
-    --pathologies-json $workspace/pathologies_dummy87.json \
+    --diagnoses-json $workspace/diagnoses_dummy74.json \
     --output-csv $workspace/pred_labels_test_vllm.csv \
     --work-dir $workspace/vllm_extraction_pred \
     --model-name $qwen
@@ -62,7 +62,7 @@ singularity exec --nv -B /hnvme:/hnvme,/tmp:/tmp "$vllm_sif" bash -lc "
     --backend vllm \
     --generated-csv $workspace/generated_test.csv \
     --text-column findings_gt \
-    --pathologies-json $workspace/pathologies_dummy87.json \
+    --diagnoses-json $workspace/diagnoses_dummy74.json \
     --output-csv $workspace/control_labels_test_vllm.csv \
     --work-dir $workspace/vllm_extraction_control \
     --model-name $qwen

@@ -211,20 +211,25 @@ given.
 ## 8. Evaluation: clinical accuracy and NLG metrics
 
 Clinical accuracy re-extracts pathology labels from the generated reports
-with the same three-step LLM pipeline used to build the ground-truth labels
-(`data-preprocessing/.../06_pathology_classification`), then compares them
-against the ground-truth labels CSV. The schema is defined entirely by the
-pathologies JSON / labels CSV headers, so the full extracted pathology set
-(e.g. 87 classes) works unchanged. On a GPU node with vLLM and the
-classifier model available:
+with the NeuroVFM MRI diagnosis prompt used to build the current 74-label
+ground truth (`data-preprocessing/.../07_neurovfm_diagnosis_extraction`),
+then compares them against the ground-truth labels CSV. The bundled schema
+contains the exact 74 diagnosis keys and guidance used for the completed
+MR-RATE extraction. On a GPU node with vLLM and Gemma 4 available:
 
 ```bash
 export GENERATED_CSV="runs/generated_test.csv"
-export PATHOLOGIES_JSON=/path/to/pathologies.json
 export OUTPUT_CSV="runs/pred_labels_test.csv"
 export WORK_DIR="runs/label_extraction_test"
+# When vLLM is provided through Apptainer:
+# export SIF=/path/to/vllm.sif
 sbatch scripts/slurm_extract_labels.sh
 ```
+
+The launcher uses the bundled `neurovfm_mri_diagnoses.json` by default. Set
+`DIAGNOSES_JSON` only to evaluate a deliberately different NeuroVFM-format
+schema; the vLLM backend rejects the legacy 37-pathology JSON so the two
+label definitions cannot be mixed silently.
 
 Empty generated reports receive all-zero labels. The `keyword` backend of
 `extract_labels` is a deterministic name/synonym matcher for tests only.
@@ -249,7 +254,7 @@ specificity of a pathology with no negative studies) are null and excluded
 from macro averages. Omit `--pred-labels` to score NLG only.
 
 The CPU-runnable end-to-end trial of this whole chain on a fabricated
-87-pathology dummy dataset:
+74-diagnosis dummy dataset:
 
 ```bash
 python tests/e2e_dummy.py

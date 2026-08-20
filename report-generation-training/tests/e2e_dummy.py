@@ -2,7 +2,7 @@
 
 Runs on CPU or GPU without external artifacts. It fabricates:
 
-- an 87-pathology schema JSON (mirroring the extracted pathology set size),
+- a 74-diagnosis schema JSON (mirroring the current extracted label set),
 - ground-truth findings whose pathology mentions define exact GT labels,
 - an exact ragged token cache with ``val`` and ``test`` splits,
 - a frozen 5-class ClassifyThenAggregate MIL head from the in-repo upstream,
@@ -44,7 +44,7 @@ from mrrate_report_training.model import (  # noqa: E402
 )
 from mrrate_report_training.targets import load_target_index  # noqa: E402
 
-NUM_PATHOLOGIES = 87
+NUM_PATHOLOGIES = 74
 MIL_CLASSES = 5
 DIM = 64
 MIL_LABEL_NAMES = [f"mil_label_{index}" for index in range(MIL_CLASSES)]
@@ -70,14 +70,14 @@ def pathology_names() -> list[str]:
 
 def write_pathologies_json(path: Path) -> None:
     payload = {
-        "pathologies": {
-            name: {
-                "positive": f"There is {name.split()[-1]}",
-                "negative": f"There is no {name.split()[-1]}",
+        "diagnoses": [
+            {
+                "key": name,
+                "guidance": "",
                 "synonyms": [name.split()[-1]],
             }
             for name in pathology_names()
-        }
+        ]
     }
     path.write_text(json.dumps(payload, indent=2))
 
@@ -239,7 +239,7 @@ def main() -> None:
     all_subjects = splits["val"] + splits["test"]
     findings, labels = build_ground_truth(rng, all_subjects)
 
-    pathologies_json = output / "pathologies_dummy87.json"
+    pathologies_json = output / "diagnoses_dummy74.json"
     write_pathologies_json(pathologies_json)
     gt_labels_csv = output / "gt_labels.csv"
     with gt_labels_csv.open("w", newline="") as handle:
@@ -327,7 +327,7 @@ def main() -> None:
         "mrrate_report_training.extract_labels",
         "--generated-csv",
         *map(str, generated_csvs),
-        "--pathologies-json",
+        "--diagnoses-json",
         str(pathologies_json),
         "--output-csv",
         str(control_labels_csv),
@@ -360,7 +360,7 @@ def main() -> None:
             "mrrate_report_training.extract_labels",
             "--generated-csv",
             str(output / f"generated_{split}.csv"),
-            "--pathologies-json",
+            "--diagnoses-json",
             str(pathologies_json),
             "--output-csv",
             str(pred_labels_csv),
@@ -459,7 +459,7 @@ def main() -> None:
         "mrrate_report_training.extract_labels",
         "--generated-csv",
         str(ablation_csv),
-        "--pathologies-json",
+        "--diagnoses-json",
         str(pathologies_json),
         "--output-csv",
         str(ablation_pred_labels),
