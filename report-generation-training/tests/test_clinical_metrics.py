@@ -81,14 +81,14 @@ def test_degenerate_class_is_nan_and_excluded_from_macro():
     assert result["summary"]["macro"]["sensitivity"] == pytest.approx(0.5)
 
 
-def test_schema_agnostic_87_pathologies():
+def test_schema_agnostic_arbitrary_class_count():
     generator = np.random.default_rng(0)
-    names = [f"pathology_{index:02d}" for index in range(87)]
-    gt = generator.integers(0, 2, size=(20, 87)).astype(float)
-    pred = generator.integers(0, 2, size=(20, 87)).astype(float)
+    names = [f"pathology_{index:02d}" for index in range(83)]
+    gt = generator.integers(0, 2, size=(20, 83)).astype(float)
+    pred = generator.integers(0, 2, size=(20, 83)).astype(float)
     result = compute_clinical_metrics(gt, pred, names)
-    assert len(result["per_pathology"]) == 87
-    assert result["summary"]["pathologies"] == 87
+    assert len(result["per_pathology"]) == 83
+    assert result["summary"]["pathologies"] == 83
 
 
 def test_load_label_csv_rejects_bad_input(tmp_path):

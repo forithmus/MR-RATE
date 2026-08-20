@@ -3,7 +3,7 @@
 Unlike tests/e2e_dummy.py (duck-typed tiny LLM, CPU), this gate exercises the
 production stack end to end with dummy *data* but real *code paths*:
 
-1. Fabricates an 87-pathology schema, ground-truth reports/labels, a
+1. Fabricates a 74-diagnosis schema, ground-truth reports/labels, a
    512-dim exact token cache (val + test), a dummy encoder checkpoint, and a
    74-class ``ClassifyThenAggregate`` MIL checkpoint whose recorded
    provenance (encoder SHA-256, architecture) satisfies preflight-grade
@@ -227,7 +227,7 @@ def main() -> None:
     # ---- Fabricated dataset, schema, cache, MIL/encoder artifacts ----------
     all_subjects = SPLITS["val"] + SPLITS["test"]
     findings, labels = build_ground_truth(rng, all_subjects)
-    pathologies_json = workspace / "pathologies_dummy87.json"
+    pathologies_json = workspace / "diagnoses_dummy74.json"
     write_pathologies_json(pathologies_json)
     gt_labels_csv = workspace / "gt_labels.csv"
     with gt_labels_csv.open("w", newline="") as handle:
@@ -428,7 +428,7 @@ def main() -> None:
         run_cli(
             "mrrate_report_training.extract_labels",
             "--generated-csv", str(workspace / f"generated_{split}.csv"),
-            "--pathologies-json", str(pathologies_json),
+            "--diagnoses-json", str(pathologies_json),
             "--output-csv", str(pred_labels),
             "--backend", "keyword",
         )
