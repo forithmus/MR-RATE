@@ -3,9 +3,10 @@ import pytest
 import torch
 import torch.nn.functional as F
 import numpy as np
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from mr_rate import MRRATE, l2norm, cast_tuple, exists
-
+from mr_rate import all_gather_batch
+from mr_rate.mr_rate import RearrangeImage
 
 # ---------------------------------------------------------------------------
 # Helper function tests
@@ -44,6 +45,40 @@ class TestHelpers:
     def test_cast_tuple_list(self):
         assert cast_tuple([1, 2], 2) == [1, 2]
 
+    def test_all_gather_batch_uninitialized(self):
+        x = torch.tensor([1, 2, 3])
+        assert torch.equal(all_gather_batch(x), x)
+
+    def test_initialized_distributed_concatenates_gathered_tensors(self):
+        x1 = torch.tensor([[1, 2]])
+        x2 = torch.tensor([[3, 4]])
+        with patch("torch.distributed.is_initialized", return_value=True), \
+            patch("torch.distributed.nn.functional.all_gather", return_value=[x1, x2]):
+            result = all_gather_batch(x1)
+            expected = torch.tensor([[1, 2], [3, 4]])
+
+            assert torch.equal(result, expected)
+            assert result.shape == (2, 2)
+
+    @pytest.fixture
+    def rearrange_layer(self): return RearrangeImage()
+
+    def test_rearrange_image(self, rearrange_layer):
+        x = torch.randn(2, 64, 128)
+        output = rearrange_layer(x)
+        
+        assert output.ndim == 3
+        assert output.shape == (2, 64, 128)
+        assert torch.equal(output, x)
+
+    def test_rearrange_reshapes_spatial_dimensions(self):
+        b, h, w, z, c = 2, 16, 16, 4, 8
+        x_flat = torch.randn(b, h * w * z, c)
+
+        from einops import rearrange
+        expected_shape = (b, c, 16, 16, z)
+        out = rearrange(x_flat, 'b (h w z) c -> b c h w z', h=16, w=16)
+        assert out.shape == expected_shape
 
 # ---------------------------------------------------------------------------
 # MRRATE model initialization tests
@@ -122,6 +157,35 @@ class TestMRRATEInit:
         )
         expected = np.log(1 / 0.07)
         assert torch.allclose(model.logit_temperature, torch.tensor([expected]), atol=1e-4)
+
+    def test_init_default_text_encoder(self, mock_image_encoder, dim_text, dim_latent):
+        with patch("mr_rate.mr_rate.BertModel.from_pretrained") as mock_from_pretrained:
+            mock_bert = MagicMock()
+            mock_from_pretrained.return_value = mock_bert
+            model = MRRATE(
+                image_encoder=mock_image_encoder,
+                text_encoder=None,
+                dim_text=dim_text,
+                dim_latent=dim_latent,
+            )
+            mock_from_pretrained.assert_called_once_with("microsoft/BiomedVLP-CXR-BERT-specialized")
+            assert model.text_transformer is mock_bert
+
+    def test_init_downsample_image_embeds(self, mock_image_encoder, mock_text_encoder,
+                                        dim_text, dim_image, dim_latent):
+        from torch import nn
+        model_downsampled = MRRATE(
+            image_encoder=mock_image_encoder,
+            text_encoder=mock_text_encoder,
+            dim_text=dim_text,
+            dim_image=dim_image,
+            dim_latent=dim_latent,
+            downsample_image_embeds=True,
+        )
+        assert isinstance(model_downsampled.to_visual_latent, nn.Sequential)
+        assert isinstance(model_downsampled.to_visual_latent[0], RearrangeImage)
+        assert isinstance(model_downsampled.to_visual_latent[1], nn.Conv3d)
+        assert isinstance(model_downsampled.to_visual_latent[2], nn.Conv3d)
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +486,40 @@ class TestTokenPadding:
         padded_tokens = tokens[:, ~mask[0]]
         assert (padded_tokens == 0).all()
 
+class TestVisualInstances:
+    @pytest.fixture
+    def model(self, mock_image_encoder, mock_text_encoder, dim_text, dim_image, dim_latent):
+        return MRRATE(
+            image_encoder=mock_image_encoder,
+            text_encoder=mock_text_encoder,
+            dim_text=dim_text,
+            dim_image=dim_image,
+            dim_latent=dim_latent,
+            fusion_mode="late",
+        )
+
+    def test_instances_mask_and_shape(self, model, dummy_image, real_volume_mask):
+        model.eval()
+        vis_proj = model.to_visual_latent
+
+        tokens, mask = model._encode_visual_instances(
+            dummy_image, real_volume_mask, vis_proj
+        )
+
+        b, r = dummy_image.shape[:2]
+        tokens_per_series = 16
+
+        assert tokens.shape == (b, r * tokens_per_series, model.dim_latent), (
+            "Expected tokens shape to be == (batch_size, num_series * tokens_per_series, dim_latent)"
+        )
+        assert mask.shape == (b, r * tokens_per_series), (
+            "Expected mask shape to be == (batch_size, num_series * tokens_per_series)"
+        )
+
+        expected_mask = real_volume_mask.unsqueeze(-1).expand(b, r, tokens_per_series).reshape(b, -1)
+        assert torch.equal(mask, expected_mask), (
+            "Mask does not match expected expansion of real_volume_mask"
+        )
 
 # ---------------------------------------------------------------------------
 # State dict / load tests
@@ -459,7 +557,10 @@ class TestModelSerialization:
             dim_latent=dim_latent,
         )
         # Save with 'module.' prefix (simulating DDP checkpoint)
-        sd = {"module." + k: v for k, v in model.state_dict().items()}
+        sd = {}
+        for i, (k, v) in enumerate(model.state_dict().items()):
+            key = f"module.{k}" if i % 2 == 0 else k
+            sd[key] = v
         path = tmp_path / "ckpt.pt"
         torch.save(sd, path)
 
@@ -472,3 +573,5 @@ class TestModelSerialization:
         )
         model2.load(str(path))
         # Should load without error
+        for (k1, v1), (k2, v2) in zip(model.state_dict().items(), model2.state_dict().items()):
+            assert torch.equal(v1, v2)
