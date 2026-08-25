@@ -189,19 +189,19 @@ class TestMRRATEInit:
 
     def test_run_checkpoint_active_branch(self, mock_image_encoder, mock_text_encoder,
                                             dim_text, dim_image, dim_latent):
-            model = MRRATE(
-                image_encoder=mock_image_encoder,
-                text_encoder=mock_text_encoder,
-                dim_text=dim_text,
-                dim_image=dim_image,
-                dim_latent=dim_latent,
-                use_gradient_checkpointing=True
-            )
-            model.train()
-            dummy_fn = lambda x: x * 2.0
-            x = torch.randn(2, 4, requires_grad=True)
-            out = model.run_checkpoint(dummy_fn, x)
-            assert torch.allclose(out, x * 2.0)
+        model = MRRATE(
+            image_encoder=mock_image_encoder,
+            text_encoder=mock_text_encoder,
+            dim_text=dim_text,
+            dim_image=dim_image,
+            dim_latent=dim_latent,
+            use_gradient_checkpointing=True
+        )
+        model.train()
+        dummy_fn = lambda x: x * 2.0
+        x = torch.randn(2, 4, requires_grad=True)
+        out = model.run_checkpoint(dummy_fn, x)
+        assert torch.allclose(out, x * 2.0)
 
 # ---------------------------------------------------------------------------
 # Forward pass tests (inference mode, no loss)
