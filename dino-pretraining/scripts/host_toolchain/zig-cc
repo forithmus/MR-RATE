@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec "${MRDINO_ZIG_ROOT:?MRDINO_ZIG_ROOT is required}/zig" cc "$@"

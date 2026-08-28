@@ -22,6 +22,8 @@ MR-RATE/
 │
 ├── contrastive-pretraining/  # Contrastive pretraining code for vision-language modeling
 │
+├── dino-pretraining/         # Self-supervised native 3-D DINOv3 on coregistered MRI
+│
 └── README.md
 ```
 
@@ -34,6 +36,7 @@ Each folder includes its own `README.md` detailing configuration, dependencies, 
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Data Preprocessing**      | End-to-end pipeline converting raw DICOM exports into clean, anonymized, and spatially standardized NIfTI volumes. Covers DICOM-to-NIfTI conversion, PACS metadata filtering, modality classification, binary brain segmentation & defacing, co-registration to a shared T1w reference, atlas registration to MNI152 space, and multi-label anatomical segmentations. Also includes the radiology report preprocessing pipeline (anonymization, translation, structuring, QC) and LLM-based pathology classification producing binary labels for 37 SNOMED CT-grounded pathologies. Includes standalone scripts for downloading and merging all MR-RATE Hugging Face repositories. |
 | **Contrastive Pretraining** | Contrastive vision-language model that aligns multi-sequence MRI volumes and radiology reports using VL-CABS loss. Uses a VJEPA2 (ViT-G) image encoder with LoRA fine-tuning and a BiomedVLP-CXR-BERT text encoder. Supports four multi-volume fusion modes (`early`, `mid_cnn`, `late`, `late_attn`) and three image spaces (`native_space`, `coreg_space`, `atlas_space`). Enables zero-shot brain MRI pathology classification at inference time. |
+| **3-D DINOv3 Pretraining** | Self-supervised DINO+iBOT+KoLeo training on coregistered multi-sequence MRI, with physical 3-D RoPE, exact per-sequence coverage, study-balanced weighting, FSDP2/FP8 production launchers, and synthetic end-to-end tests. |
 
 ## Workflow Summary
 

@@ -48,3 +48,26 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  dino-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MR DINO test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dino-pretraining/requirements.txt pytest
+          git clone --filter=blob:none https://github.com/facebookresearch/dinov3.git "$RUNNER_TEMP/dinov3"
+          git -C "$RUNNER_TEMP/dinov3" checkout 6876159a11b4df116f30f667f8c9888617df0751
+
+      - name: Run synthetic MR DINO integration tests
+        working-directory: dino-pretraining
+        env:
+          PYTHONPATH: ${{ runner.temp }}/dinov3
+        run: python -m pytest -q
