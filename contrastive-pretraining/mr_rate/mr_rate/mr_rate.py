@@ -2,19 +2,13 @@ import torch
 from torch import nn, einsum
 import torch.nn.functional as F
 import torch.distributed as dist
-import torch.distributed.nn as dist_nn
 from torch.utils.checkpoint import checkpoint
-from torchvision import transforms as T, utils
-import torchvision
 
-from einops import rearrange, repeat, reduce, pack, unpack
+from einops import rearrange
 from einops.layers.torch import Rearrange
 from pathlib import Path
 import copy
-import math
-import random
 import numpy as np
-from functools import partial
 import torch.distributed.nn.functional as dist_nn_fun
 
 from transformers import BertTokenizer, BertModel

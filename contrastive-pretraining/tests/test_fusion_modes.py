@@ -138,6 +138,13 @@ class TestLateAttnFusion:
         assert tokens.shape[1] == 18432
         assert not torch.isnan(tokens[:, :16]).any()  # real tokens
 
+        precomputed_text_latents = torch.randn(B, DIM_LATENT)
+        tokens_latents, _ = model._encode_visual_tokens(
+            image, vol_mask, vis_proj, text_latents=precomputed_text_latents,
+            num_sentences_per_image=2
+        )
+        assert tokens_latents.shape[1] == 18432
+        assert not torch.isnan(tokens[:, :16]).any() # real tokens
 
 class TestFusionConsistency:
     """All fusion modes should produce same output shape and finite values."""
