@@ -9,21 +9,22 @@ from mr_dino.data import (
     CACHE_MANIFEST_NAME,
     CropSpec,
     InfiniteStudySampler,
-    MRCoregDINO3DDataset,
+    MRAtlasDINO3DDataset,
+    _discover_raw_atlas,
     _contained_start,
     _intersection_box,
     collate_dino3d,
-    validate_coreg_cache,
+    validate_atlas_cache,
 )
 
 
 def make_dummy_cache(root, studies=4, shape=(8, 32, 32)):
-    space = root / "coreg_space"
+    space = root / "atlas_space"
     space.mkdir(parents=True)
     manifest = {
         "version": 1,
         "layout": "per_subject_stack",
-        "space": "coreg_space",
+        "space": "atlas_space",
         "target_spacing": [1.0, 0.5, 0.5],
         "target_shape": list(shape),
         "posterior_shift_mm": 15.0,
@@ -46,7 +47,7 @@ def make_dummy_cache(root, studies=4, shape=(8, 32, 32)):
 
 
 def tiny_dataset(cache, seed=17):
-    return MRCoregDINO3DDataset(
+    return MRAtlasDINO3DDataset(
         preprocessed_dir=str(cache),
         crop_spec=CropSpec(
             global_shape=(8, 32, 32),
@@ -59,15 +60,35 @@ def tiny_dataset(cache, seed=17):
     )
 
 
-def test_cache_contract_rejects_non_coreg(tmp_path):
+def test_cache_contract_rejects_non_atlas(tmp_path):
     cache = make_dummy_cache(tmp_path / "cache")
-    assert validate_coreg_cache(str(cache))["space"] == "coreg_space"
-    manifest_path = cache / "coreg_space" / CACHE_MANIFEST_NAME
+    assert validate_atlas_cache(str(cache))["space"] == "atlas_space"
+    manifest_path = cache / "atlas_space" / CACHE_MANIFEST_NAME
     manifest = json.loads(manifest_path.read_text())
     manifest["space"] = "native_space"
     manifest_path.write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="expected 'coreg_space'"):
-        validate_coreg_cache(str(cache))
+    with pytest.raises(ValueError, match="expected 'atlas_space'"):
+        validate_atlas_cache(str(cache))
+
+
+def test_cache_contract_rejects_coreg_space_argument(tmp_path):
+    cache = make_dummy_cache(tmp_path / "cache")
+    with pytest.raises(ValueError, match="requires space='atlas_space'"):
+        validate_atlas_cache(str(cache), space="coreg_space")
+
+
+def test_raw_discovery_selects_atlas_img_not_coreg_img(tmp_path):
+    atlas_dir = tmp_path / "batch00" / "study_atlas" / "atlas_img"
+    atlas_dir.mkdir(parents=True)
+    (atlas_dir / "t1.nii.gz").touch()
+    (atlas_dir / "flair.nii.gz").touch()
+    coreg_dir = tmp_path / "batch00" / "study_coreg" / "coreg_img"
+    coreg_dir.mkdir(parents=True)
+    (coreg_dir / "t1.nii.gz").touch()
+
+    samples = _discover_raw_atlas(str(tmp_path), selected=None)
+    assert [sample["study_uid"] for sample in samples] == ["study_atlas"]
+    assert samples[0]["n_sequences"] == 2
 
 
 def test_aligned_cross_sequence_views_and_determinism(tmp_path):

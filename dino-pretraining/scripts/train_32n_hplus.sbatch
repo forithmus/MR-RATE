@@ -55,7 +55,7 @@ fi
 echo "MR DINOv3 H+: stage=$STAGE nodes=$SLURM_NNODES output=$OUTPUT"
 srun --nodes="$SLURM_NNODES" --ntasks="$SLURM_NNODES" --ntasks-per-node=1 \
   --kill-on-bad-exit=1 env TRAIN_MODULE=mr_dino.train_ddp "$SCRIPT_DIR/train_node.sh" \
-  --preprocessed-dir "$PREPROCESSED_DIR" "${SPLIT_ARGS[@]}" \
+  --preprocessed-dir "$PREPROCESSED_DIR" --space atlas_space "${SPLIT_ARGS[@]}" \
   --output-dir "$OUTPUT" --stage "$STAGE" --arch hplus --steps "$STEPS" \
   --batch-size "${BATCH_SIZE:-1}" --workers "${WORKERS:-2}" \
   --local-crops "${LOCAL_CROPS:-8}" \

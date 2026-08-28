@@ -34,7 +34,7 @@ head_node=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
 MASTER_ADDR=$(getent ahostsv4 "$head_node" | awk '{print $1; exit}')
 export MASTER_ADDR MASTER_PORT=${MASTER_PORT:-29672}
 srun --nodes=1 --ntasks=1 --kill-on-bad-exit=1 "$SCRIPT_DIR/train_node.sh" \
-  --preprocessed-dir "$DUMMY" --output-dir "$OUTPUT" \
+  --preprocessed-dir "$DUMMY" --space atlas_space --output-dir "$OUTPUT" \
   --stage pretrain --arch tiny --steps 2 --batch-size 1 --grad-accum-steps 1 \
   --workers 0 --max-studies 2 --local-crops 2 \
   --global-shape 8 32 32 --local-shape 4 16 16 \

@@ -1,4 +1,4 @@
-"""Distributed, resumable 3-D DINOv3 training for coregistered MR-RATE."""
+"""Distributed, resumable 3-D DINOv3 training for atlas-registered MR-RATE."""
 
 from __future__ import annotations
 
@@ -23,10 +23,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
 from .data import (
-    MRCoregDINO3DDataset,
+    MRAtlasDINO3DDataset,
     InfiniteStudySampler,
     collate_dino3d,
-    discover_coreg_cache,
+    discover_atlas_cache,
     npz_volume_shape,
     stage_crop_spec,
 )
@@ -37,11 +37,11 @@ from .objective import DINO3DLearner, LossWeights
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("--preprocessed-dir", help="MR-RATE cache root containing coreg_space/*.npz")
-    source.add_argument("--data-folder", help="Raw MR-RATE coreg tree (single-process debug only)")
+    source.add_argument("--preprocessed-dir", help="MR-RATE cache root containing atlas_space/*.npz")
+    source.add_argument("--data-folder", help="Raw MR-RATE atlas tree (single-process debug only)")
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
-    p.add_argument("--space", default="coreg_space", choices=("coreg_space",))
+    p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
     p.add_argument("--arch", choices=("tiny", "large", "hplus"), default="hplus")
@@ -96,9 +96,14 @@ def setup_distributed() -> tuple[int, int, int, torch.device]:
     return rank, world, local, device
 
 
-def read_train_files(preprocessed_dir: str, splits_csv: str | None, split: str) -> list[str]:
-    return [sample["cache_path"] for sample in discover_coreg_cache(
-        preprocessed_dir, splits_csv=splits_csv, split=split, space="coreg_space"
+def read_train_files(
+    preprocessed_dir: str,
+    splits_csv: str | None,
+    split: str,
+    space: str = "atlas_space",
+) -> list[str]:
+    return [sample["cache_path"] for sample in discover_atlas_cache(
+        preprocessed_dir, splits_csv=splits_csv, split=split, space=space
     )]
 
 
@@ -230,7 +235,7 @@ def save_checkpoint(
         rng_by_rank = [local_rng]
     if rank == 0:
         state = {
-            "format": "mrrate_coreg_dinov3d_full_v1",
+            "format": "mrrate_atlas_dinov3d_full_v1",
             "step": step,
             "stage": args.stage,
             "world_size": dist.get_world_size() if dist.is_initialized() else 1,
@@ -273,6 +278,10 @@ def load_checkpoint(
             print(f"[resume] {path} not found; starting from scratch", flush=True)
         return 0
     state = torch.load(path, map_location="cpu", weights_only=False)
+    if state.get("format") != "mrrate_atlas_dinov3d_full_v1":
+        raise RuntimeError(
+            f"Checkpoint format {state.get('format')!r} is not atlas-space MR DINO"
+        )
     if int(state.get("world_size", world)) != world:
         raise RuntimeError("Exact DDP resume requires the checkpoint's original world size")
     saved_fingerprint = state.get("args", {}).get("dataset_fingerprint")
@@ -348,7 +357,7 @@ def main() -> int:
         dist.barrier()
 
     if args.preprocessed_dir:
-        files = read_train_files(args.preprocessed_dir, args.splits_csv, args.split)
+        files = read_train_files(args.preprocessed_dir, args.splits_csv, args.split, args.space)
         if len(files) < world:
             raise RuntimeError(f"{len(files)} cache studies cannot supply {world} distributed ranks")
         args.dataset_fingerprint = cache_fingerprint(files, world, args.max_studies)
@@ -375,7 +384,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRCoregDINO3DDataset(
+    dataset = MRAtlasDINO3DDataset(
         **dataset_kwargs,
         splits_csv=args.splits_csv,
         split=args.split,

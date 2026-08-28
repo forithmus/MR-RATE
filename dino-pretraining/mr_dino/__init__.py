@@ -1,5 +1,5 @@
-"""Native 3-D DINOv3 training for coregistered MR-RATE studies."""
+"""Volumetric DINOv3 training for atlas-registered MR-RATE studies."""
 
-from .data import CropSpec, MRCoregDINO3DDataset, collate_dino3d
+from .data import CropSpec, MRAtlasDINO3DDataset, collate_dino3d
 
-__all__ = ["CropSpec", "MRCoregDINO3DDataset", "collate_dino3d"]
+__all__ = ["CropSpec", "MRAtlasDINO3DDataset", "collate_dino3d"]

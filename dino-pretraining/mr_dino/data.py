@@ -1,9 +1,9 @@
-"""Coregistered multi-sequence MR sampling for native 3-D DINOv3.
+"""Atlas-registered multi-sequence MR sampling for volumetric DINOv3.
 
 The dataset consumes the exact cache produced by MR-RATE's existing
 ``contrastive-pretraining/scripts/preprocess_volumes.py``.  A cache item is one
-study with aligned sequences in ``volumes[N, D, H, W]``.  Global and local DINO
-views share a physical region, but may use different aligned MR sequences.
+study with atlas-aligned sequences in ``volumes[N, D, H, W]``.  Global and local
+DINO views share a physical region, but may use different aligned MR sequences.
 Every iBOT teacher/student pair always uses the same sequence and voxel crop.
 """
 
@@ -206,21 +206,21 @@ def _cache_space_dir(preprocessed_dir: str, space: str) -> Path:
     return nested if nested.is_dir() else root
 
 
-def validate_coreg_cache(
+def validate_atlas_cache(
     preprocessed_dir: str,
-    space: str = "coreg_space",
+    space: str = "atlas_space",
     expected_spacing: tuple[float, float, float] = (1.0, 0.5, 0.5),
 ) -> dict:
-    """Fail early unless this is a compatible MR-RATE coregistered cache."""
-    if space != "coreg_space":
-        raise ValueError("MR DINO requires space='coreg_space'; native/atlas inputs are not accepted")
+    """Fail early unless this is a compatible MR-RATE atlas-space cache."""
+    if space != "atlas_space":
+        raise ValueError("MR DINO requires space='atlas_space'; native/coreg inputs are not accepted")
     space_dir = _cache_space_dir(preprocessed_dir, space)
     manifest_path = space_dir / CACHE_MANIFEST_NAME
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Missing MR-RATE preprocessing manifest: {manifest_path}")
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("space") != "coreg_space":
-        raise ValueError(f"Cache is {manifest.get('space')!r}, expected 'coreg_space'")
+    if manifest.get("space") != "atlas_space":
+        raise ValueError(f"Cache is {manifest.get('space')!r}, expected 'atlas_space'")
     if manifest.get("layout") != EXPECTED_CACHE_LAYOUT:
         raise ValueError(
             f"Unsupported cache layout {manifest.get('layout')!r}; expected {EXPECTED_CACHE_LAYOUT!r}"
@@ -231,13 +231,13 @@ def validate_coreg_cache(
     return manifest
 
 
-def discover_coreg_cache(
+def discover_atlas_cache(
     preprocessed_dir: str,
     splits_csv: str | None = None,
     split: str = "train",
-    space: str = "coreg_space",
+    space: str = "atlas_space",
 ) -> list[dict]:
-    manifest = validate_coreg_cache(preprocessed_dir, space)
+    manifest = validate_atlas_cache(preprocessed_dir, space)
     space_dir = _cache_space_dir(preprocessed_dir, space)
     selected = _load_split_ids(splits_csv, split)
     samples = []
@@ -253,7 +253,7 @@ def discover_coreg_cache(
             "volume_shape": shape[1:],
         })
     if not samples:
-        raise RuntimeError(f"No {split!r} coregistered studies found under {space_dir}")
+        raise RuntimeError(f"No {split!r} atlas-registered studies found under {space_dir}")
     return samples
 
 
@@ -277,15 +277,15 @@ def npz_volume_shape(path: str | Path) -> tuple[int, int, int, int]:
     return shape
 
 
-def _discover_raw_coreg(data_folder: str, selected: set[str] | None) -> list[dict]:
+def _discover_raw_atlas(data_folder: str, selected: set[str] | None) -> list[dict]:
     """Discover either MR-RATE batch layout or study/space/img layout."""
     root = Path(data_folder)
     samples = []
-    direct = sorted(root.glob("*/coreg_space/img"))
+    direct = sorted(root.glob("*/atlas_space/img"))
     if direct:
         candidates = [(p.parent.parent.name, p) for p in direct]
     else:
-        candidates = [(p.parent.name, p) for p in sorted(root.glob("*/*/coreg_img"))]
+        candidates = [(p.parent.name, p) for p in sorted(root.glob("*/*/atlas_img"))]
     for study_uid, image_dir in candidates:
         if selected is not None and study_uid not in selected:
             continue
@@ -297,7 +297,7 @@ def _discover_raw_coreg(data_folder: str, selected: set[str] | None) -> list[dic
                 "n_sequences": len(paths),
             })
     if not samples:
-        raise RuntimeError(f"No coregistered NIfTIs found under {root}")
+        raise RuntimeError(f"No atlas-registered NIfTIs found under {root}")
     return samples
 
 
@@ -307,7 +307,7 @@ def _raw_volume(
     target_spacing: tuple[float, float, float],
     posterior_shift_mm: float,
 ) -> torch.Tensor:
-    """Apply MR-RATE's RAS/resample/z-score/crop pipeline to one coreg NIfTI."""
+    """Apply MR-RATE's RAS/resample/z-score/crop pipeline to one atlas NIfTI."""
     import nibabel as nib
 
     image = nib.as_closest_canonical(nib.load(path))
@@ -345,8 +345,8 @@ def _raw_volume(
     return out.to(torch.bfloat16)
 
 
-class MRCoregDINO3DDataset(Dataset):
-    """Study-level SSL samples from aligned, variable-count MR sequences."""
+class MRAtlasDINO3DDataset(Dataset):
+    """Study-level SSL samples from atlas-aligned, variable-count MR sequences."""
 
     def __init__(
         self,
@@ -355,7 +355,7 @@ class MRCoregDINO3DDataset(Dataset):
         data_folder: str | None = None,
         splits_csv: str | None = None,
         split: str = "train",
-        space: str = "coreg_space",
+        space: str = "atlas_space",
         crop_spec: CropSpec = CropSpec(),
         target_spacing: tuple[float, float, float] = (1.0, 0.5, 0.5),
         target_shape: tuple[int, int, int] = (256, 384, 384),
@@ -367,8 +367,8 @@ class MRCoregDINO3DDataset(Dataset):
     ) -> None:
         if (preprocessed_dir is None) == (data_folder is None):
             raise ValueError("Pass exactly one of preprocessed_dir or data_folder")
-        if space != "coreg_space":
-            raise ValueError("Only coreg_space is valid for aligned cross-sequence MR DINO")
+        if space != "atlas_space":
+            raise ValueError("Only atlas_space is valid for atlas-registered MR DINO")
         if not 0 <= cross_sequence_probability <= 1:
             raise ValueError("cross_sequence_probability must be in [0, 1]")
         self.crop_spec = crop_spec
@@ -383,10 +383,10 @@ class MRCoregDINO3DDataset(Dataset):
         self._cached_names: list[str] | None = None
         self.preprocessed = preprocessed_dir is not None
         if self.preprocessed:
-            manifest = validate_coreg_cache(preprocessed_dir, space, target_spacing)
+            manifest = validate_atlas_cache(preprocessed_dir, space, target_spacing)
             self.target_shape = tuple(int(x) for x in manifest["target_shape"])
             if cache_files is None:
-                self.samples = discover_coreg_cache(preprocessed_dir, splits_csv, split, space)
+                self.samples = discover_atlas_cache(preprocessed_dir, splits_csv, split, space)
             else:
                 selected = _load_split_ids(splits_csv, split)
                 self.samples = [
@@ -400,10 +400,10 @@ class MRCoregDINO3DDataset(Dataset):
                     if selected is None or Path(path).stem in selected
                 ]
                 if not self.samples:
-                    raise RuntimeError("This rank received no coregistered cache studies")
+                    raise RuntimeError("This rank received no atlas-registered cache studies")
         else:
             selected = _load_split_ids(splits_csv, split)
-            self.samples = _discover_raw_coreg(data_folder, selected)
+            self.samples = _discover_raw_atlas(data_folder, selected)
         for sample in self.samples:
             if "volume_shape" in sample and tuple(sample["volume_shape"]) != self.target_shape:
                 raise ValueError(

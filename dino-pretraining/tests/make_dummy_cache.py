@@ -1,4 +1,4 @@
-"""Create a small MR-RATE-compatible coregistered cache for GPU smoke tests."""
+"""Create a small MR-RATE-compatible atlas-space cache for GPU smoke tests."""
 
 import argparse
 import json
@@ -15,12 +15,12 @@ def main() -> None:
     parser.add_argument("--shape", type=int, nargs=3, default=(64, 192, 192))
     args = parser.parse_args()
 
-    space = Path(args.out) / "coreg_space"
+    space = Path(args.out) / "atlas_space"
     space.mkdir(parents=True, exist_ok=True)
     manifest = {
         "version": 1,
         "layout": "per_subject_stack",
-        "space": "coreg_space",
+        "space": "atlas_space",
         "target_spacing": [1.0, 0.5, 0.5],
         "target_shape": list(args.shape),
         "posterior_shift_mm": 15.0,
@@ -44,7 +44,7 @@ def main() -> None:
             volume += np.sin((x + sequence * 3) / 9) * 0.04
             volumes.append(volume.astype(np.float16))
         np.savez(space / f"dummy_{study:03d}.npz", volumes=np.stack(volumes))
-    print(f"Wrote {args.studies} dummy coregistered studies to {space}")
+    print(f"Wrote {args.studies} dummy atlas-registered studies to {space}")
 
 
 if __name__ == "__main__":

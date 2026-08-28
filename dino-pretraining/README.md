@@ -1,7 +1,7 @@
-# Native 3-D DINOv3 for MR-RATE
+# Atlas-space 3-D DINOv3 for MR-RATE
 
 This module adapts FORA's CT DINOv3 training strategy to MR-RATE's
-**coregistered multi-sequence MRI**. It is self-supervised: reports and
+**atlas-registered multi-sequence MRI**. It is self-supervised: reports and
 pathology labels are not used.
 
 ## Data and view contract
@@ -10,17 +10,24 @@ Production training consumes the cache already produced by
 `contrastive-pretraining/scripts/preprocess_volumes.py`:
 
 ```text
-<preprocessed_dir>/coreg_space/_manifest.json
-<preprocessed_dir>/coreg_space/<study_uid>.npz
+<preprocessed_dir>/atlas_space/_manifest.json
+<preprocessed_dir>/atlas_space/<study_uid>.npz
     volumes: [N_sequences, D, H, W]
 ```
 
-The loader rejects native/atlas-space caches, a missing manifest, mismatched
+The loader rejects native/coreg-space caches, a missing manifest, mismatched
 voxel spacing, malformed arrays, unexpected shapes, empty studies, and
-non-finite values. Raw coregistered NIfTIs are also supported by the DDP debug
+non-finite values. Raw atlas-registered NIfTIs are also supported by the DDP debug
 entry point using the same RAS, physical resampling, z-score normalization,
 posterior shift, and crop/pad policy as MR-RATE preprocessing. Cached input is
 recommended for production so NIfTI decoding cannot starve the GPUs.
+
+MR-RATE-atlas already contains atlas-registered NIfTIs. The NPZ step below does
+**not** register them again; it is the same optional offline packing used by the
+previous MR-RATE training code to avoid repeatedly decoding and resampling very
+large NIfTIs. Production launchers use the packed atlas cache for throughput.
+Unlike coregistration alone, atlas registration also places corresponding
+anatomy from different studies in the same reference coordinate system.
 
 Every sequence in every retained study is an anchor exactly once per local
 data epoch. Cache files are assigned to distributed ranks by sequence count
@@ -33,7 +40,7 @@ keeps only its current study stack in memory, avoiding repeated NPZ decoding.
 For each anchor:
 
 1. Global view 1 uses the anchor sequence.
-2. Global view 2 uses a different coregistered sequence with probability 0.75
+2. Global view 2 uses a different atlas-aligned sequence with probability 0.75
    (or the anchor when no second sequence exists). The two crops overlap by at
    least 75% on every axis.
 3. Local crops stay inside the global intersection and may come from any
@@ -52,15 +59,15 @@ masking, distributed KoLeo, optional Gram anchoring, EMA teacher, atomic full
 state checkpoints, exact sampler/RNG resume, FSDP2, BF16, optional H200 FP8,
 and compile caches on node-local `/tmp`.
 
-## Prepare the coregistered cache
+## Prepare the atlas-space cache
 
 From `contrastive-pretraining/`:
 
 ```bash
 python scripts/preprocess_volumes.py \
-  --data_folder /path/to/MR-RATE-coreg/mri \
+  --data_folder /path/to/MR-RATE-atlas/mri \
   --out_dir /path/to/mrrate_preprocessed \
-  --space coreg_space \
+  --space atlas_space \
   --normalizer zscore \
   --num_workers 8
 ```
@@ -84,7 +91,7 @@ Set `DINOV3_ROOT` to that checkout and add both it and this directory to
 
 ## Synthetic tests
 
-The unit/integration suite creates a dummy coregistered multi-sequence cache and
+The unit/integration suite creates a dummy atlas-registered multi-sequence cache and
 checks manifest rejection, deterministic cross-sequence alignment, complete
 sequence indexing, local/global containment, 3-D masks, a real DINO+iBOT
 forward/backward optimizer step, EMA update, and checkpoint reload:
@@ -104,7 +111,7 @@ The job succeeds only after `step_00000002/COMPLETE` exists.
 
 ## Production training
 
-The production launcher is deliberately gated on a prebuilt coregistered cache:
+The production launcher is deliberately gated on a prebuilt atlas-space cache:
 
 ```bash
 cd dino-pretraining

@@ -1,4 +1,4 @@
-"""FSDP2 training for the literal DINOv3 ViT-7B on coregistered MR-RATE."""
+"""FSDP2 training for the literal DINOv3 ViT-7B on atlas-registered MR-RATE."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from dinov3.checkpointer import load_checkpoint as dcp_load
 from dinov3.checkpointer import save_checkpoint as dcp_save
 from dinov3.layers.fp8_linear import convert_linears_to_fp8
 
-from .data import MRCoregDINO3DDataset, InfiniteStudySampler, collate_dino3d, stage_crop_spec
+from .data import MRAtlasDINO3DDataset, InfiniteStudySampler, collate_dino3d, stage_crop_spec
 from .fp8 import enable_fsdp_mixed_precision_fp8
 from .objective import DINO3DLearner, LossWeights
 from .train_ddp import (
@@ -43,10 +43,10 @@ from .train_ddp import (
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--preprocessed-dir", required=True,
-                   help="MR-RATE preprocessing cache root containing coreg_space/*.npz")
+                   help="MR-RATE preprocessing cache root containing atlas_space/*.npz")
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
-    p.add_argument("--space", default="coreg_space", choices=("coreg_space",))
+    p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
     p.add_argument("--arch", choices=("tiny", "7b"), default="7b")
@@ -294,7 +294,7 @@ def save_checkpoint(
     os.replace(tmp, path / f"runtime_rank{rank:04d}.pt")
     if rank == 0:
         (path / "metadata.json").write_text(json.dumps({
-            "format": "mrrate_coreg_dinov3d_fsdp2_v1",
+            "format": "mrrate_atlas_dinov3d_fsdp2_v1",
             "step": step,
             "stage": args.stage,
             "sampler_offset_per_rank": sampler_offset,
@@ -330,6 +330,10 @@ def load_checkpoint(
     if not (path / "COMPLETE").exists():
         raise RuntimeError(f"Incomplete checkpoint: {path}")
     metadata = json.loads((path / "metadata.json").read_text())
+    if metadata.get("format") != "mrrate_atlas_dinov3d_fsdp2_v1":
+        raise RuntimeError(
+            f"Checkpoint format {metadata.get('format')!r} is not atlas-space MR DINO"
+        )
     saved_world = int(metadata.get("world_size", dist.get_world_size()))
     if saved_world != dist.get_world_size():
         raise RuntimeError(
@@ -339,7 +343,7 @@ def load_checkpoint(
     saved_fingerprint = metadata.get("args", {}).get("dataset_fingerprint")
     if saved_fingerprint and saved_fingerprint != args.dataset_fingerprint:
         raise RuntimeError(
-            "Coregistered training cache/split changed since the checkpoint; "
+            "Atlas-space training cache/split changed since the checkpoint; "
             "refusing an inexact sampler resume"
         )
     source_stage = metadata["stage"]
@@ -391,7 +395,7 @@ def main() -> int:
         (output / "config.json").write_text(json.dumps(vars(args), indent=2, sort_keys=True))
     dist.barrier()
 
-    files = read_train_files(args.preprocessed_dir, args.splits_csv, args.split)
+    files = read_train_files(args.preprocessed_dir, args.splits_csv, args.split, args.space)
     if len(files) < world:
         raise RuntimeError(f"{len(files)} cache studies cannot supply {world} distributed ranks")
     args.dataset_fingerprint = cache_fingerprint(files, world, args.max_studies)
@@ -409,7 +413,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRCoregDINO3DDataset(
+    dataset = MRAtlasDINO3DDataset(
         preprocessed_dir=args.preprocessed_dir,
         cache_files=assigned,
         splits_csv=args.splits_csv,
