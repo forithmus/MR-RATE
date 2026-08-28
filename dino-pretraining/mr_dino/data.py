@@ -1,15 +1,17 @@
 """Atlas-registered multi-sequence MR sampling for volumetric DINOv3.
 
-The dataset consumes the exact cache produced by MR-RATE's existing
-``contrastive-pretraining/scripts/preprocess_volumes.py``.  A cache item is one
-study with atlas-aligned sequences in ``volumes[N, D, H, W]``.  Global and local
-DINO views share a physical region, but may use different aligned MR sequences.
-Every iBOT teacher/student pair always uses the same sequence and voxel crop.
+The default path discovers and preprocesses atlas NIfTIs with the canonical
+loader used by the previous MR-RATE training code.  The optional NPZ path reads
+the volume cache produced by that loader's ``preprocess_volumes.py`` helper.
+Global and local DINO views share a physical region, but may use different
+aligned MR sequences.  Every iBOT teacher/student pair always uses the same
+sequence and voxel crop.
 """
 
 from __future__ import annotations
 
 import csv
+import importlib.util
 import json
 import math
 import os
@@ -26,6 +28,7 @@ from torch.utils.data import Dataset, Sampler
 
 CACHE_MANIFEST_NAME = "_manifest.json"
 EXPECTED_CACHE_LAYOUT = "per_subject_stack"
+_PREVIOUS_DATA_MODULE = None
 
 
 @dataclass(frozen=True)
@@ -277,28 +280,61 @@ def npz_volume_shape(path: str | Path) -> tuple[int, int, int, int]:
     return shape
 
 
-def _discover_raw_atlas(data_folder: str, selected: set[str] | None) -> list[dict]:
-    """Discover either MR-RATE batch layout or study/space/img layout."""
-    root = Path(data_folder)
+def previous_mr_data_module():
+    """Load the canonical dataloader used by previous MR-RATE trainings."""
+    global _PREVIOUS_DATA_MODULE
+    if _PREVIOUS_DATA_MODULE is not None:
+        return _PREVIOUS_DATA_MODULE
+    default_path = (
+        Path(__file__).resolve().parents[2]
+        / "contrastive-pretraining"
+        / "scripts"
+        / "data.py"
+    )
+    source_path = Path(os.environ.get("MRRATE_PREVIOUS_DATA_MODULE", default_path))
+    if not source_path.is_file():
+        raise FileNotFoundError(
+            "Cannot locate the previous MR-RATE dataloader at "
+            f"{source_path}; set MRRATE_PREVIOUS_DATA_MODULE"
+        )
+    spec = importlib.util.spec_from_file_location("mrrate_previous_training_data", source_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot import previous MR-RATE dataloader: {source_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _PREVIOUS_DATA_MODULE = module
+    return module
+
+
+def discover_raw_atlas(
+    data_folder: str,
+    selected: set[str] | None = None,
+) -> list[dict]:
+    """Discover atlas NIfTIs through the previous training dataloader."""
     samples = []
-    direct = sorted(root.glob("*/atlas_space/img"))
-    if direct:
-        candidates = [(p.parent.parent.name, p) for p in direct]
-    else:
-        candidates = [(p.parent.name, p) for p in sorted(root.glob("*/*/atlas_img"))]
-    for study_uid, image_dir in candidates:
+    previous = previous_mr_data_module()
+    for subject in previous.discover_subjects(data_folder, "atlas_space"):
+        study_uid = str(subject["subject_id"])
         if selected is not None and study_uid not in selected:
             continue
-        paths = sorted(str(p) for p in image_dir.glob("*.nii.gz"))
-        if paths:
-            samples.append({
-                "study_uid": study_uid,
-                "image_paths": paths,
-                "n_sequences": len(paths),
-            })
+        paths = [str(path) for path in subject["image_paths"]]
+        samples.append({
+            "study_uid": study_uid,
+            "image_paths": paths,
+            "n_sequences": len(paths),
+        })
     if not samples:
-        raise RuntimeError(f"No atlas-registered NIfTIs found under {root}")
+        raise RuntimeError(f"No atlas-registered NIfTIs found under {data_folder}")
     return samples
+
+
+def discover_raw_atlas_split(
+    data_folder: str,
+    splits_csv: str | None = None,
+    split: str = "train",
+) -> list[dict]:
+    """Discover a split using the previous loader's atlas-space convention."""
+    return discover_raw_atlas(data_folder, _load_split_ids(splits_csv, split))
 
 
 def _raw_volume(
@@ -307,42 +343,17 @@ def _raw_volume(
     target_spacing: tuple[float, float, float],
     posterior_shift_mm: float,
 ) -> torch.Tensor:
-    """Apply MR-RATE's RAS/resample/z-score/crop pipeline to one atlas NIfTI."""
-    import nibabel as nib
-
-    image = nib.as_closest_canonical(nib.load(path))
-    array = image.get_fdata(dtype=np.float32).transpose(2, 0, 1)
-    np.nan_to_num(array, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    zooms = image.header.get_zooms()
-    current_spacing = (float(zooms[2]), float(zooms[0]), float(zooms[1]))
-    new_shape = tuple(
-        max(1, int(array.shape[axis] * current_spacing[axis] / target_spacing[axis]))
-        for axis in range(3)
-    )
-    tensor = F.interpolate(
-        torch.from_numpy(np.ascontiguousarray(array))[None, None],
-        size=new_shape,
-        mode="trilinear",
-        align_corners=False,
-    )[0, 0]
-    nonzero = tensor != 0
-    if bool(nonzero.any()):
-        values = tensor[nonzero]
-        tensor = (tensor - values.mean()) / values.std(unbiased=False).clamp_min(1e-8)
-    tensor = tensor.clamp(-5, 5) / 5
-    out = tensor.new_zeros(target_shape)
-    source_slices, target_slices = [], []
+    """Run the exact live NIfTI transform used by previous MR-RATE training."""
+    previous = previous_mr_data_module()
     posterior_shift_voxels = int(round(posterior_shift_mm / target_spacing[2]))
-    for axis, (have, want) in enumerate(zip(tensor.shape, target_shape)):
-        n = min(have, want)
-        source_start = max(0, (have - n) // 2)
-        if axis == 2 and have > want:
-            source_start = min(max(0, source_start - posterior_shift_voxels), have - want)
-        target_start = max(0, (want - n) // 2)
-        source_slices.append(slice(source_start, source_start + n))
-        target_slices.append(slice(target_start, target_start + n))
-    out[tuple(target_slices)] = tensor[tuple(source_slices)]
-    return out.to(torch.bfloat16)
+    array = previous.preprocess_nii(
+        path,
+        target_spacing,
+        target_shape,
+        posterior_shift_voxels,
+        previous.NORMALIZERS["zscore"](),
+    )
+    return torch.from_numpy(np.ascontiguousarray(array)).to(torch.bfloat16)
 
 
 class MRAtlasDINO3DDataset(Dataset):
@@ -361,6 +372,7 @@ class MRAtlasDINO3DDataset(Dataset):
         target_shape: tuple[int, int, int] = (256, 384, 384),
         posterior_shift_mm: float = 15.0,
         cache_files: list[str] | None = None,
+        raw_samples: list[dict] | None = None,
         cross_sequence_probability: float = 0.75,
         candidate_trials: int = 12,
         seed: int = 3407,
@@ -403,7 +415,15 @@ class MRAtlasDINO3DDataset(Dataset):
                     raise RuntimeError("This rank received no atlas-registered cache studies")
         else:
             selected = _load_split_ids(splits_csv, split)
-            self.samples = _discover_raw_atlas(data_folder, selected)
+            if raw_samples is None:
+                self.samples = discover_raw_atlas(data_folder, selected)
+            else:
+                self.samples = [
+                    sample for sample in raw_samples
+                    if selected is None or sample["study_uid"] in selected
+                ]
+                if not self.samples:
+                    raise RuntimeError("This rank received no atlas-registered NIfTI studies")
         for sample in self.samples:
             if "volume_shape" in sample and tuple(sample["volume_shape"]) != self.target_shape:
                 raise ValueError(

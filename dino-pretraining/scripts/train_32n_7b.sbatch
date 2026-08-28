@@ -27,7 +27,7 @@ if [[ -z "${CODE:-}" ]]; then
   fi
 fi
 SCRIPT_DIR="$CODE/scripts"
-: "${PREPROCESSED_DIR:?Set PREPROCESSED_DIR to the MR-RATE preprocessing cache root}"
+: "${DATA_FOLDER:?Set DATA_FOLDER to the MR-RATE-atlas NIfTI root}"
 STAGE=${STAGE:-pretrain}
 OUTPUT=${OUTPUT:-"$PWD/mrdino3d_7b/$STAGE"}
 mkdir -p "$OUTPUT"
@@ -54,10 +54,10 @@ if [[ -n "${SPLITS_CSV:-}" ]]; then
   SPLIT_ARGS=(--splits-csv "$SPLITS_CSV")
 fi
 
-echo "MR DINOv3 7B: stage=$STAGE nodes=$SLURM_NNODES output=$OUTPUT cache=$PREPROCESSED_DIR"
+echo "MR DINOv3 7B: stage=$STAGE nodes=$SLURM_NNODES output=$OUTPUT data=$DATA_FOLDER"
 srun --nodes="$SLURM_NNODES" --ntasks="$SLURM_NNODES" --ntasks-per-node=1 \
   --kill-on-bad-exit=1 "$SCRIPT_DIR/train_node.sh" \
-  --preprocessed-dir "$PREPROCESSED_DIR" \
+  --data-folder "$DATA_FOLDER" \
   --space atlas_space \
   "${SPLIT_ARGS[@]}" \
   --output-dir "$OUTPUT" --stage "$STAGE" --arch 7b --steps "$STEPS" \

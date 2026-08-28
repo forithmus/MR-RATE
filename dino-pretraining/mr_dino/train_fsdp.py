@@ -25,7 +25,12 @@ from dinov3.checkpointer import load_checkpoint as dcp_load
 from dinov3.checkpointer import save_checkpoint as dcp_save
 from dinov3.layers.fp8_linear import convert_linears_to_fp8
 
-from .data import MRAtlasDINO3DDataset, InfiniteStudySampler, collate_dino3d, stage_crop_spec
+from .data import (
+    MRAtlasDINO3DDataset,
+    InfiniteStudySampler,
+    collate_dino3d,
+    stage_crop_spec,
+)
 from .fp8 import enable_fsdp_mixed_precision_fp8
 from .objective import DINO3DLearner, LossWeights
 from .train_ddp import (
@@ -34,6 +39,7 @@ from .train_ddp import (
     build_backbone,
     cache_fingerprint,
     cosine,
+    distributed_raw_assignment,
     read_train_files,
     setup_distributed,
     stage_files,
@@ -42,8 +48,15 @@ from .train_ddp import (
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--preprocessed-dir", required=True,
-                   help="MR-RATE preprocessing cache root containing atlas_space/*.npz")
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--data-folder",
+        help="MR-RATE-atlas NIfTI tree; uses the same live loader as previous MIL training",
+    )
+    source.add_argument(
+        "--preprocessed-dir",
+        help="Optional MR-RATE volume cache root containing atlas_space/*.npz",
+    )
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
     p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
@@ -64,6 +77,9 @@ def parse_args() -> argparse.Namespace:
                    help="Smoke/debug crop override; production uses the stage default")
     p.add_argument("--local-shape", type=int, nargs=3, default=None,
                    help="Smoke/debug crop override; production uses the stage default")
+    p.add_argument("--target-spacing", type=float, nargs=3, default=(1.0, 0.5, 0.5))
+    p.add_argument("--target-shape", type=int, nargs=3, default=(256, 384, 384))
+    p.add_argument("--posterior-shift-mm", type=float, default=15.0)
     p.add_argument("--seed", type=int, default=3407)
     p.add_argument("--dino-prototypes", type=int, default=262_144)
     p.add_argument("--ibot-prototypes", type=int, default=98_304)
@@ -395,18 +411,40 @@ def main() -> int:
         (output / "config.json").write_text(json.dumps(vars(args), indent=2, sort_keys=True))
     dist.barrier()
 
-    files = read_train_files(args.preprocessed_dir, args.splits_csv, args.split, args.space)
-    if len(files) < world:
-        raise RuntimeError(f"{len(files)} cache studies cannot supply {world} distributed ranks")
-    args.dataset_fingerprint = cache_fingerprint(files, world, args.max_studies)
+    if args.preprocessed_dir:
+        files = read_train_files(args.preprocessed_dir, args.splits_csv, args.split, args.space)
+        if len(files) < world:
+            raise RuntimeError(f"{len(files)} cache studies cannot supply {world} distributed ranks")
+        args.dataset_fingerprint = cache_fingerprint(files, world, args.max_studies)
+        from .data import npz_volume_shape
+        sequence_counts = {path: npz_volume_shape(path)[0] for path in files}
+        assigned = balanced_file_assignment(files, world, weights=sequence_counts)[rank]
+        if args.max_studies:
+            assigned = assigned[: args.max_studies]
+        assigned = stage_files(assigned, os.environ.get("MRDINO_LOCAL_DATA_DIR", ""), rank)
+        dataset_kwargs = {
+            "preprocessed_dir": args.preprocessed_dir,
+            "cache_files": assigned,
+        }
+    else:
+        assigned_samples, args.dataset_fingerprint = distributed_raw_assignment(
+            data_folder=args.data_folder,
+            splits_csv=args.splits_csv,
+            split=args.split,
+            output=output,
+            world=world,
+            rank=rank,
+            max_studies_per_rank=args.max_studies,
+            target_spacing=tuple(args.target_spacing),
+            target_shape=tuple(args.target_shape),
+            posterior_shift_mm=args.posterior_shift_mm,
+        )
+        dataset_kwargs = {
+            "data_folder": args.data_folder,
+            "raw_samples": assigned_samples,
+        }
     if rank == 0:
         (output / "config.json").write_text(json.dumps(vars(args), indent=2, sort_keys=True))
-    from .data import npz_volume_shape
-    sequence_counts = {path: npz_volume_shape(path)[0] for path in files}
-    assigned = balanced_file_assignment(files, world, weights=sequence_counts)[rank]
-    if args.max_studies:
-        assigned = assigned[: args.max_studies]
-    assigned = stage_files(assigned, os.environ.get("MRDINO_LOCAL_DATA_DIR", ""), rank)
     base_crop_spec = stage_crop_spec(args.stage)
     crop_spec = type(base_crop_spec)(
         global_shape=tuple(args.global_shape) if args.global_shape else base_crop_spec.global_shape,
@@ -414,12 +452,14 @@ def main() -> int:
         local_crops=args.local_crops,
     )
     dataset = MRAtlasDINO3DDataset(
-        preprocessed_dir=args.preprocessed_dir,
-        cache_files=assigned,
+        **dataset_kwargs,
         splits_csv=args.splits_csv,
         split=args.split,
         space=args.space,
         crop_spec=crop_spec,
+        target_spacing=tuple(args.target_spacing),
+        target_shape=tuple(args.target_shape),
+        posterior_shift_mm=args.posterior_shift_mm,
         cross_sequence_probability=args.cross_sequence_probability,
         candidate_trials=args.candidate_trials,
         seed=args.seed,

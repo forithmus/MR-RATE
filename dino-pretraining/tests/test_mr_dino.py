@@ -10,10 +10,12 @@ from mr_dino.data import (
     CropSpec,
     InfiniteStudySampler,
     MRAtlasDINO3DDataset,
-    _discover_raw_atlas,
+    _raw_volume,
     _contained_start,
     _intersection_box,
     collate_dino3d,
+    discover_raw_atlas,
+    previous_mr_data_module,
     validate_atlas_cache,
 )
 
@@ -86,9 +88,29 @@ def test_raw_discovery_selects_atlas_img_not_coreg_img(tmp_path):
     coreg_dir.mkdir(parents=True)
     (coreg_dir / "t1.nii.gz").touch()
 
-    samples = _discover_raw_atlas(str(tmp_path), selected=None)
+    samples = discover_raw_atlas(str(tmp_path), selected=None)
     assert [sample["study_uid"] for sample in samples] == ["study_atlas"]
     assert samples[0]["n_sequences"] == 2
+
+
+def test_raw_transform_is_exact_previous_mil_transform(tmp_path):
+    nib = pytest.importorskip("nibabel")
+    image_dir = tmp_path / "batch00" / "study" / "atlas_img"
+    image_dir.mkdir(parents=True)
+    x, y, z = np.indices((12, 14, 6), dtype=np.float32)
+    array = np.sin(x / 3) + np.cos(y / 4) + z / 7
+    array[(x + y + z) % 11 == 0] = 0
+    path = image_dir / "t1.nii.gz"
+    nib.save(nib.Nifti1Image(array, np.diag([0.5, 0.5, 1.0, 1.0])), path)
+
+    shape = (6, 12, 14)
+    spacing = (1.0, 0.5, 0.5)
+    previous = previous_mr_data_module()
+    expected = previous.preprocess_nii(
+        str(path), spacing, shape, 0, previous.NORMALIZERS["zscore"]()
+    )
+    actual = _raw_volume(str(path), shape, spacing, posterior_shift_mm=0)
+    torch.testing.assert_close(actual, torch.from_numpy(expected).to(torch.bfloat16), rtol=0, atol=0)
 
 
 def test_aligned_cross_sequence_views_and_determinism(tmp_path):

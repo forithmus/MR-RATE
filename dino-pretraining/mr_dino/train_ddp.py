@@ -27,6 +27,7 @@ from .data import (
     InfiniteStudySampler,
     collate_dino3d,
     discover_atlas_cache,
+    discover_raw_atlas_split,
     npz_volume_shape,
     stage_crop_spec,
 )
@@ -38,7 +39,10 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("--preprocessed-dir", help="MR-RATE cache root containing atlas_space/*.npz")
-    source.add_argument("--data-folder", help="Raw MR-RATE atlas tree (single-process debug only)")
+    source.add_argument(
+        "--data-folder",
+        help="MR-RATE-atlas NIfTI tree; uses the same live loader as previous MIL training",
+    )
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
     p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
@@ -71,6 +75,9 @@ def parse_args() -> argparse.Namespace:
                    help="Smoke/debug crop override; production uses the stage default")
     p.add_argument("--local-shape", type=int, nargs=3, default=None,
                    help="Smoke/debug crop override; production uses the stage default")
+    p.add_argument("--target-spacing", type=float, nargs=3, default=(1.0, 0.5, 0.5))
+    p.add_argument("--target-shape", type=int, nargs=3, default=(256, 384, 384))
+    p.add_argument("--posterior-shift-mm", type=float, default=15.0)
     p.add_argument("--cross-sequence-probability", type=float, default=0.75)
     p.add_argument("--candidate-trials", type=int, default=12)
     p.add_argument("--save-every", type=int, default=250)
@@ -122,6 +129,41 @@ def cache_fingerprint(
     return hashlib.sha256(payload).hexdigest()
 
 
+def raw_fingerprint(
+    samples: list[dict],
+    world: int = 1,
+    max_studies_per_rank: int | None = None,
+    target_spacing: tuple[float, float, float] = (1.0, 0.5, 0.5),
+    target_shape: tuple[int, int, int] = (256, 384, 384),
+    posterior_shift_mm: float = 15.0,
+) -> str:
+    """Fingerprint raw studies without tying exact resume to an absolute mount path."""
+    records = []
+    for sample in sorted(samples, key=lambda item: item["study_uid"]):
+        images = [
+            (Path(path).name, os.path.getsize(path))
+            for path in sorted(sample["image_paths"])
+        ]
+        records.append((sample["study_uid"], images))
+    payload = json.dumps(
+        {
+            "records": records,
+            "world": world,
+            "max_studies_per_rank": max_studies_per_rank,
+            "preprocessing": {
+                "space": "atlas_space",
+                "normalizer": "zscore",
+                "target_spacing": list(target_spacing),
+                "target_shape": list(target_shape),
+                "posterior_shift_mm": posterior_shift_mm,
+            },
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def balanced_file_assignment(
     files: list[str],
     world: int,
@@ -142,6 +184,87 @@ def balanced_file_assignment(
         primary_loads[rank] += primary
         byte_loads[rank] += size
     return bins
+
+
+def balanced_sample_assignment(samples: list[dict], world: int) -> list[list[dict]]:
+    """Greedily balance raw studies by sequence count, then compressed bytes."""
+    bins: list[list[dict]] = [[] for _ in range(world)]
+    sequence_loads = [0] * world
+    byte_loads = [0] * world
+    sized = []
+    for sample in samples:
+        size = sum(os.path.getsize(path) for path in sample["image_paths"])
+        sized.append((int(sample["n_sequences"]), size, sample["study_uid"], sample))
+    sized.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    for sequences, size, _, sample in sized:
+        rank = min(range(world), key=lambda r: (sequence_loads[r], byte_loads[r], r))
+        bins[rank].append(sample)
+        sequence_loads[rank] += sequences
+        byte_loads[rank] += size
+    return bins
+
+
+def distributed_raw_assignment(
+    *,
+    data_folder: str,
+    splits_csv: str | None,
+    split: str,
+    output: Path,
+    world: int,
+    rank: int,
+    max_studies_per_rank: int | None,
+    target_spacing: tuple[float, float, float],
+    target_shape: tuple[int, int, int],
+    posterior_shift_mm: float,
+) -> tuple[list[dict], str]:
+    """Discover once on rank 0 and publish one small assignment file per rank."""
+    assignment_dir = output / "dataset_assignments"
+    metadata_path = assignment_dir / "metadata.json"
+    if rank == 0:
+        samples = discover_raw_atlas_split(
+            data_folder, splits_csv=splits_csv, split=split
+        )
+        if len(samples) < world:
+            raise RuntimeError(f"{len(samples)} atlas studies cannot supply {world} ranks")
+        fingerprint = raw_fingerprint(
+            samples,
+            world,
+            max_studies_per_rank,
+            target_spacing,
+            target_shape,
+            posterior_shift_mm,
+        )
+        assignments = balanced_sample_assignment(samples, world)
+        if max_studies_per_rank:
+            assignments = [items[:max_studies_per_rank] for items in assignments]
+        if any(not items for items in assignments):
+            raise RuntimeError("Raw atlas assignment left at least one distributed rank empty")
+        assignment_dir.mkdir(parents=True, exist_ok=True)
+        for assigned_rank, items in enumerate(assignments):
+            destination = assignment_dir / f"rank_{assigned_rank:04d}.json"
+            temporary = destination.with_suffix(f".json.partial.{os.getpid()}")
+            temporary.write_text(json.dumps(items, separators=(",", ":")))
+            os.replace(temporary, destination)
+        metadata = {
+            "format": "mrrate_atlas_raw_assignment_v1",
+            "world_size": world,
+            "dataset_fingerprint": fingerprint,
+            "split": split,
+        }
+        temporary = metadata_path.with_suffix(f".json.partial.{os.getpid()}")
+        temporary.write_text(json.dumps(metadata, indent=2, sort_keys=True))
+        os.replace(temporary, metadata_path)
+    if dist.is_initialized():
+        dist.barrier()
+    metadata = json.loads(metadata_path.read_text())
+    if metadata.get("format") != "mrrate_atlas_raw_assignment_v1":
+        raise RuntimeError(f"Invalid raw atlas assignment metadata: {metadata_path}")
+    if int(metadata.get("world_size", -1)) != world:
+        raise RuntimeError("Raw atlas assignment world size changed during startup")
+    assigned = json.loads((assignment_dir / f"rank_{rank:04d}.json").read_text())
+    if not assigned:
+        raise RuntimeError(f"Rank {rank} received no raw atlas studies")
+    return assigned, str(metadata["dataset_fingerprint"])
 
 
 def stage_files(files: list[str], root: str, rank: int) -> list[str]:
@@ -371,10 +494,22 @@ def main() -> int:
             "cache_files": assigned,
         }
     else:
-        if world != 1:
-            raise ValueError("Distributed MR DINO requires --preprocessed-dir")
-        dataset_kwargs = {"data_folder": args.data_folder}
-        args.dataset_fingerprint = None
+        assigned_samples, args.dataset_fingerprint = distributed_raw_assignment(
+            data_folder=args.data_folder,
+            splits_csv=args.splits_csv,
+            split=args.split,
+            output=output,
+            world=world,
+            rank=rank,
+            max_studies_per_rank=args.max_studies,
+            target_spacing=tuple(args.target_spacing),
+            target_shape=tuple(args.target_shape),
+            posterior_shift_mm=args.posterior_shift_mm,
+        )
+        dataset_kwargs = {
+            "data_folder": args.data_folder,
+            "raw_samples": assigned_samples,
+        }
     if rank == 0:
         with open(output / "config.json", "w") as f:
             json.dump(vars(args), f, indent=2, sort_keys=True)
@@ -390,6 +525,9 @@ def main() -> int:
         split=args.split,
         space=args.space,
         crop_spec=crop_spec,
+        target_spacing=tuple(args.target_spacing),
+        target_shape=tuple(args.target_shape),
+        posterior_shift_mm=args.posterior_shift_mm,
         cross_sequence_probability=args.cross_sequence_probability,
         candidate_trials=args.candidate_trials,
         seed=args.seed,

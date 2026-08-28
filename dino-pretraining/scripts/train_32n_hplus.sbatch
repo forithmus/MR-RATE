@@ -27,7 +27,7 @@ if [[ -z "${CODE:-}" ]]; then
   fi
 fi
 SCRIPT_DIR="$CODE/scripts"
-: "${PREPROCESSED_DIR:?Set PREPROCESSED_DIR to the MR-RATE preprocessing cache root}"
+: "${DATA_FOLDER:?Set DATA_FOLDER to the MR-RATE-atlas NIfTI root}"
 STAGE=${STAGE:-pretrain}
 OUTPUT=${OUTPUT:-"$PWD/mrdino3d_hplus/$STAGE"}
 mkdir -p "$OUTPUT"
@@ -52,10 +52,10 @@ if [[ -n "${SPLITS_CSV:-}" ]]; then
   SPLIT_ARGS=(--splits-csv "$SPLITS_CSV")
 fi
 
-echo "MR DINOv3 H+: stage=$STAGE nodes=$SLURM_NNODES output=$OUTPUT"
+echo "MR DINOv3 H+: stage=$STAGE nodes=$SLURM_NNODES output=$OUTPUT data=$DATA_FOLDER"
 srun --nodes="$SLURM_NNODES" --ntasks="$SLURM_NNODES" --ntasks-per-node=1 \
   --kill-on-bad-exit=1 env TRAIN_MODULE=mr_dino.train_ddp "$SCRIPT_DIR/train_node.sh" \
-  --preprocessed-dir "$PREPROCESSED_DIR" --space atlas_space "${SPLIT_ARGS[@]}" \
+  --data-folder "$DATA_FOLDER" --space atlas_space "${SPLIT_ARGS[@]}" \
   --output-dir "$OUTPUT" --stage "$STAGE" --arch hplus --steps "$STEPS" \
   --batch-size "${BATCH_SIZE:-1}" --workers "${WORKERS:-2}" \
   --local-crops "${LOCAL_CROPS:-8}" \

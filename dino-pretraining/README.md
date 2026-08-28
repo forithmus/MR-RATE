@@ -6,36 +6,30 @@ pathology labels are not used.
 
 ## Data and view contract
 
-Production training consumes the cache already produced by
-`contrastive-pretraining/scripts/preprocess_volumes.py`:
+Production training reads the existing MR-RATE-atlas NIfTI tree directly:
 
 ```text
-<preprocessed_dir>/atlas_space/_manifest.json
-<preprocessed_dir>/atlas_space/<study_uid>.npz
-    volumes: [N_sequences, D, H, W]
+<data_folder>/batchXX/<study_uid>/atlas_img/*.nii.gz
 ```
 
-The loader rejects native/coreg-space caches, a missing manifest, mismatched
-voxel spacing, malformed arrays, unexpected shapes, empty studies, and
-non-finite values. Raw atlas-registered NIfTIs are also supported by the DDP debug
-entry point using the same RAS, physical resampling, z-score normalization,
-posterior shift, and crop/pad policy as MR-RATE preprocessing. Cached input is
-recommended for production so NIfTI decoding cannot starve the GPUs.
+It imports the canonical discovery and per-volume preprocessing functions from
+`contrastive-pretraining/scripts/data.py`, the loader used by previous MR-RATE
+MIL training. Therefore atlas selection, canonical RAS orientation, physical
+resampling, z-score normalization, posterior shift, and crop/padding are exactly
+shared rather than reimplemented. `--space atlas_space` maps to `atlas_img`.
 
-MR-RATE-atlas already contains atlas-registered NIfTIs. The NPZ step below does
-**not** register them again; it is the same optional offline packing used by the
-previous MR-RATE training code to avoid repeatedly decoding and resampling very
-large NIfTIs. Production launchers use the packed atlas cache for throughput.
-Unlike coregistration alone, atlas registration also places corresponding
-anatomy from different studies in the same reference coordinate system.
+An optional preprocessed volume cache remains available with
+`--preprocessed-dir`. This is separate from cached MIL: cached MIL stores the
+frozen encoder's output token bags, whereas the optional NPZ cache stores input
+volumes before the encoder. MR-DINO does not require either cache.
 
 Every sequence in every retained study is an anchor exactly once per local
-data epoch. Cache files are assigned to distributed ranks by sequence count
-(bytes break ties), not merely by file count. A sequence receives weight
+data epoch. Studies are assigned to distributed ranks by sequence count
+(source bytes break ties), not merely by study count. A sequence receives weight
 `1 / sequences_in_study`, globally rescaled to mean one, so studies with many
 sequences do not dominate the objective. Studies are shuffled, and their
 sequence anchors stay grouped in a shuffled within-study order; each worker
-keeps only its current study stack in memory, avoiding repeated NPZ decoding.
+keeps only its current study stack in memory, avoiding repeated NIfTI decoding.
 
 For each anchor:
 
@@ -59,7 +53,7 @@ masking, distributed KoLeo, optional Gram anchoring, EMA teacher, atomic full
 state checkpoints, exact sampler/RNG resume, FSDP2, BF16, optional H200 FP8,
 and compile caches on node-local `/tmp`.
 
-## Prepare the atlas-space cache
+## Optional input-volume cache
 
 From `contrastive-pretraining/`:
 
@@ -91,10 +85,11 @@ Set `DINOV3_ROOT` to that checkout and add both it and this directory to
 
 ## Synthetic tests
 
-The unit/integration suite creates a dummy atlas-registered multi-sequence cache and
-checks manifest rejection, deterministic cross-sequence alignment, complete
-sequence indexing, local/global containment, 3-D masks, a real DINO+iBOT
-forward/backward optimizer step, EMA update, and checkpoint reload:
+The unit/integration suite creates raw atlas-registered NIfTIs and an optional
+dummy cache. It verifies that the raw transform is bit-for-bit the previous MIL
+transform, plus manifest rejection, deterministic cross-sequence alignment,
+complete sequence indexing, local/global containment, 3-D masks, a real
+DINO+iBOT forward/backward optimizer step, EMA update, and checkpoint reload:
 
 ```bash
 cd dino-pretraining
@@ -111,11 +106,11 @@ The job succeeds only after `step_00000002/COMPLETE` exists.
 
 ## Production training
 
-The production launcher is deliberately gated on a prebuilt atlas-space cache:
+The production launcher uses the existing MR-RATE-atlas dataset directly:
 
 ```bash
 cd dino-pretraining
-PREPROCESSED_DIR=/path/to/mrrate_preprocessed \
+DATA_FOLDER=/path/to/MR-RATE-atlas/mri \
 SPLITS_CSV=/path/to/splits.csv \
 OUTPUT=/path/to/mrdino3d_7b/pretrain \
 sbatch scripts/train_32n_7b.sbatch
@@ -130,7 +125,7 @@ For later stages:
 
 ```bash
 STAGE=gram RESUME=/path/to/pretrain/checkpoints/step_00100000 \
-PREPROCESSED_DIR=/path/to/mrrate_preprocessed \
+DATA_FOLDER=/path/to/MR-RATE-atlas/mri \
 OUTPUT=/path/to/mrdino3d_7b/gram \
 sbatch scripts/train_32n_7b.sbatch
 ```
@@ -143,7 +138,7 @@ container and DINOv3 checkout.
 The same 32-node H+ fallback used by CT-DINO is also available:
 
 ```bash
-PREPROCESSED_DIR=/path/to/mrrate_preprocessed \
+DATA_FOLDER=/path/to/MR-RATE-atlas/mri \
 OUTPUT=/path/to/mrdino3d_hplus/pretrain \
 sbatch scripts/train_32n_hplus.sbatch
 ```
@@ -159,7 +154,7 @@ compiler caches, InfiniBand/NCCL settings, and optional split filtering. The
 
 ```bash
 torchrun --standalone --nproc-per-node=1 -m mr_dino.train_ddp \
-  --preprocessed-dir /path/to/mrrate_preprocessed \
+  --data-folder /path/to/MR-RATE-atlas/mri \
   --output-dir /tmp/mrdino_debug \
   --arch tiny --steps 10 --workers 0 --local-crops 2 \
   --prototypes 64 --head-hidden-dim 128 \
@@ -168,3 +163,6 @@ torchrun --standalone --nproc-per-node=1 -m mr_dino.train_ddp \
 ```
 
 This path is for correctness/debugging. Use FSDP2 for the 7B production model.
+
+To use the optional NPZ input cache in a manual launch, replace
+`--data-folder ...` with `--preprocessed-dir /path/to/mrrate_preprocessed`.
