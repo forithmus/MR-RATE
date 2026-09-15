@@ -198,3 +198,86 @@ def test_synthetic_forward_backward_and_checkpoint(tmp_path):
     learner.load_state_dict(saved["model"])
     optimizer.load_state_dict(saved["optimizer"])
     assert saved["step"] == 1
+
+
+
+# --------------------------------------------------------------------------- Sinkhorn count
+def _reference_sinkhorn_single_process(logits, temperature, iterations=3):
+    """Plain (non-distributed) Sinkhorn over ALL tokens: the definition the distributed version must match."""
+    q = torch.exp((logits.float() - logits.float().max()) / temperature).t()
+    global_batch, prototypes = q.shape[1], q.shape[0]
+    q /= q.sum().clamp_min(1e-12)
+    for _ in range(iterations):
+        q /= q.sum(dim=1, keepdim=True).clamp_min(1e-12)
+        q /= prototypes
+        q /= q.sum(dim=0, keepdim=True).clamp_min(1e-12)
+        q /= global_batch
+    return (q * global_batch).t()
+
+
+def _legacy_sinkhorn(logits, temperature, world, iterations=3):
+    """The historical implementation (local rows x world size denominator) for equal-count parity."""
+    import torch.distributed as dist
+    max_logit = logits.detach().float().max()
+    if dist.is_initialized():
+        dist.all_reduce(max_logit, op=dist.ReduceOp.MAX)
+    q = torch.exp((logits.float() - max_logit) / temperature).t()
+    global_batch = q.shape[1] * world
+    prototypes = q.shape[0]
+    total = q.sum()
+    if dist.is_initialized():
+        dist.all_reduce(total)
+    q /= total.clamp_min(1e-12)
+    for _ in range(iterations):
+        rows = q.sum(dim=1, keepdim=True)
+        if dist.is_initialized():
+            dist.all_reduce(rows)
+        q /= rows.clamp_min(1e-12)
+        q /= prototypes
+        q /= q.sum(dim=0, keepdim=True).clamp_min(1e-12)
+        q /= global_batch
+    return (q * global_batch).t()
+
+
+def test_sinkhorn_single_process_matches_legacy_and_rejects_empty():
+    from mr_dino.objective import distributed_sinkhorn
+    torch.manual_seed(0)
+    logits = torch.randn(23, 7)
+    torch.testing.assert_close(distributed_sinkhorn(logits, 0.07), _legacy_sinkhorn(logits, 0.07, 1), atol=0, rtol=0)
+    with pytest.raises(ValueError):
+        distributed_sinkhorn(torch.zeros(0, 7), 0.07)
+
+
+def _sinkhorn_worker(rank, rendezvous):
+    import torch.distributed as dist
+    from datetime import timedelta
+    from mr_dino.objective import distributed_sinkhorn
+    torch.set_num_threads(1)
+    dist.init_process_group("gloo", init_method="file://" + rendezvous, rank=rank, world_size=2,
+                            timeout=timedelta(seconds=60))
+    try:
+        torch.manual_seed(11)
+        logits = torch.randn(30, 9) * 3
+        # Equal local counts: corrected == legacy bit for bit.
+        local = logits[rank * 15:(rank + 1) * 15]
+        torch.testing.assert_close(distributed_sinkhorn(local, 0.07), _legacy_sinkhorn(local, 0.07, 2), atol=0, rtol=0)
+        # Unequal local counts (masked tokens): corrected == single-process over all tokens; legacy differs.
+        for split in (7, 0, 30):
+            local = logits[:split] if rank == 0 else logits[split:]
+            got = distributed_sinkhorn(local, 0.07)
+            expected = _reference_sinkhorn_single_process(logits, 0.07)
+            expected_local = expected[:split] if rank == 0 else expected[split:]
+            assert got.shape == local.shape and got.dtype == torch.float32
+            torch.testing.assert_close(got, expected_local, atol=1e-6, rtol=1e-5)
+            if split == 7:
+                legacy = _legacy_sinkhorn(local, 0.07, 2)
+                assert not torch.allclose(legacy, expected_local, atol=1e-6, rtol=1e-5)
+        # Globally empty raises on both ranks.
+        with pytest.raises(ValueError):
+            distributed_sinkhorn(torch.zeros(0, 9), 0.07)
+    finally:
+        dist.destroy_process_group()
+
+
+def test_sinkhorn_uses_actual_global_token_count_across_ranks(tmp_path):
+    torch.multiprocessing.spawn(_sinkhorn_worker, args=(str(tmp_path / "rendezvous"),), nprocs=2, join=True)
