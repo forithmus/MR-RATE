@@ -50,16 +50,34 @@ class SSLNetwork3D(nn.Module):
 
 @torch.no_grad()
 def distributed_sinkhorn(logits: Tensor, temperature: float, iterations: int = 3) -> Tensor:
-    """Official DINOv3 Sinkhorn-Knopp assignment with WORLD as the group."""
+    """Official DINOv3 Sinkhorn-Knopp assignment with WORLD as the group.
+
+    The global batch size is the SUM of the actual local row counts across all
+    ranks, not ``local_rows * world_size``.  iBOT block masking gives every rank
+    a different number of masked tokens, so the equal-count shortcut biased the
+    prototype targets; with equal counts (e.g. CLS logits) both are identical.
+    A rank may hold zero rows; a globally empty batch raises on every rank.
+    """
+    if logits.ndim != 2 or logits.shape[1] < 1:
+        raise ValueError("logits must have shape [local_tokens, prototypes]")
+    distributed = dist.is_initialized()
+    global_count = torch.tensor(logits.shape[0], dtype=torch.int64, device=logits.device)
+    if distributed:
+        dist.all_reduce(global_count, op=dist.ReduceOp.SUM)
+    global_batch = int(global_count.item())
+    if global_batch == 0:
+        raise ValueError("Sinkhorn requires at least one token globally")
     # A global additive constant cancels during Sinkhorn normalization. Remove
     # it before exponentiation so a larger masked-token batch cannot overflow
     # merely because it is more likely to contain an extreme teacher logit.
-    max_logit = logits.detach().float().max()
-    if dist.is_initialized():
+    max_logit = (
+        logits.detach().float().max()
+        if logits.shape[0]
+        else torch.full((), -torch.inf, dtype=torch.float32, device=logits.device)
+    )
+    if distributed:
         dist.all_reduce(max_logit, op=dist.ReduceOp.MAX)
     q = torch.exp((logits.float() - max_logit) / temperature).t()
-    world = dist.get_world_size() if dist.is_initialized() else 1
-    global_batch = q.shape[1] * world
     prototypes = q.shape[0]
     total = q.sum()
     if dist.is_initialized():
