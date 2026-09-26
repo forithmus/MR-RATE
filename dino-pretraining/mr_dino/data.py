@@ -25,6 +25,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, Sampler
 
+from .recipe import overlap_pairs, snap_second_start, token_offset
+
 
 CACHE_MANIFEST_NAME = "_manifest.json"
 EXPECTED_CACHE_LAYOUT = "per_subject_stack"
@@ -376,6 +378,8 @@ class MRAtlasDINO3DDataset(Dataset):
         cross_sequence_probability: float = 0.75,
         candidate_trials: int = 12,
         seed: int = 3407,
+        global_overlap: float = 0.25,
+        patch_size: tuple[int, int, int] = (2, 16, 16),
     ) -> None:
         if (preprocessed_dir is None) == (data_folder is None):
             raise ValueError("Pass exactly one of preprocessed_dir or data_folder")
@@ -383,6 +387,13 @@ class MRAtlasDINO3DDataset(Dataset):
             raise ValueError("Only atlas_space is valid for atlas-registered MR DINO")
         if not 0 <= cross_sequence_probability <= 1:
             raise ValueError("cross_sequence_probability must be in [0, 1]")
+        if not 0 <= global_overlap <= 1:
+            raise ValueError("global_overlap must be in [0, 1]")
+        # FORA fix: the two global crops only need >= 25% overlap per axis (0.75 made them near
+        # duplicates), and the second crop is snapped to the patch lattice so that every token in
+        # the overlap has an exact twin for the cross-crop patch objective.
+        self.global_overlap = float(global_overlap)
+        self.patch_size = tuple(int(v) for v in patch_size)
         self.crop_spec = crop_spec
         self.target_shape = tuple(int(x) for x in target_shape)
         self.target_spacing = tuple(float(x) for x in target_spacing)
@@ -500,10 +511,13 @@ class MRAtlasDINO3DDataset(Dataset):
         first_start = _informative_start(
             stack[first_sequence], self.crop_spec.global_shape, rng, self.candidate_trials
         )
-        global_starts = _overlapping_global_starts(
-            tuple(stack.shape[1:]), self.crop_spec.global_shape, rng, first=first_start
+        container = tuple(stack.shape[1:])
+        first, second = _overlapping_global_starts(
+            container, self.crop_spec.global_shape, rng, first=first_start,
+            min_overlap=self.global_overlap,
         )
-        lo, hi = _intersection_box(global_starts, self.crop_spec.global_shape)
+        second = snap_second_start(first, second, container, self.crop_spec.global_shape, self.patch_size)
+        global_starts = (first, second)
 
         teacher_globals, student_globals = [], []
         for sequence, start in zip(global_sequences, global_starts):
@@ -514,6 +528,11 @@ class MRAtlasDINO3DDataset(Dataset):
         local_views, local_sequences, local_starts = [], [], []
         for _ in range(self.crop_spec.local_crops):
             sequence = rng.randrange(n_sequences)
+            # FORA fix: locals lie inside ONE of the globals (the intersection of two crops with
+            # 25% overlap can be thinner than a local crop).
+            parent = global_starts[rng.randrange(2)]
+            lo = parent
+            hi = tuple(min(p + g, c) for p, g, c in zip(parent, self.crop_spec.global_shape, container))
             start = _contained_start(lo, hi, self.crop_spec.local_shape, rng)
             clean = _crop_at_start(stack[sequence], self.crop_spec.local_shape, start)
             local_views.append(_student_distortion(clean, rng).unsqueeze(0))
@@ -573,6 +592,7 @@ def collate_dino3d(
     samples: list[dict],
     patch_size: tuple[int, int, int] = (2, 16, 16),
     mask_ratio: tuple[float, float] = (0.1, 0.5),
+    cross_view_sequences: str = "same",
 ) -> dict:
     teacher = torch.stack([sample["teacher_global"] for sample in samples], dim=1)
     student = torch.stack([sample["student_global"] for sample in samples], dim=1)
@@ -590,7 +610,27 @@ def collate_dino3d(
     masks = torch.stack(masks)
     indices = masks.flatten().nonzero().flatten()
     weights = (1.0 / masks.sum(-1).clamp(min=1)).unsqueeze(-1).expand_as(masks)[masks]
+    # Twin tokens of the two global crops (cross-crop patch objective). By default only when both
+    # globals show the SAME sequence, preserving this module's contract that cross-sequence images
+    # are never patch-level targets; "any" also pairs co-registered voxels across contrasts.
+    if cross_view_sequences not in {"same", "any", "none"}:
+        raise ValueError("cross_view_sequences must be 'same', 'any' or 'none'")
+    n = math.prod(grid)
+    pa, pb, ps = [], [], []
+    for index, sample in enumerate(samples):
+        seq0, seq1 = sample["global_sequences"]
+        if cross_view_sequences == "none" or (cross_view_sequences == "same" and seq0 != seq1):
+            continue
+        g0, g1 = sample["global_starts"]
+        a, b = overlap_pairs(token_offset(g0, g1, patch_size), grid)
+        pa.append(a + index * n)
+        pb.append(b + index * n)
+        ps.append(torch.full((a.numel(),), index, dtype=torch.long))
+    empty = torch.empty(0, dtype=torch.long)
     return {
+        "cross_a": torch.cat(pa) if pa else empty,
+        "cross_b": torch.cat(pb) if pb else empty,
+        "cross_sample": torch.cat(ps) if ps else empty,
         "teacher_global": teacher,
         "student_global": student,
         "student_local": local,

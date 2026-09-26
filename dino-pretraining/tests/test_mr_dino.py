@@ -124,10 +124,11 @@ def test_aligned_cross_sequence_views_and_determinism(tmp_path):
     assert torch.equal(first["teacher_global"], again["teacher_global"])
     assert first["teacher_global"].shape == (2, 1, 8, 32, 32)
     assert first["student_local"].shape == (2, 1, 4, 16, 16)
-    lo, hi = _intersection_box(first["global_starts"], (8, 32, 32))
-    for start in first["local_starts"]:
-        for s, n, left, right in zip(start, (4, 16, 16), lo, hi):
-            assert left <= s and s + n <= right
+    for start in first["local_starts"]:   # each local crop lies inside one of the two globals
+        assert any(
+            all(g <= s and s + n <= g + G for s, n, g, G in zip(start, (4, 16, 16), parent, (8, 32, 32)))
+            for parent in first["global_starts"]
+        )
 
 
 def test_collate_masks_match_patch_grid(tmp_path):

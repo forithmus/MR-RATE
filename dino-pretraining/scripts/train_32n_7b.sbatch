@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# LEGACY recipe (DINOv3-7B continuation settings). The FORA CT run with these settings failed (flat prototype targets, 1k warmup, last-block position leakage); use train_32n_vitl.sbatch.
 #SBATCH --job-name=mr_dino3_7b
 #SBATCH --partition=h200
 #SBATCH --nodes=32

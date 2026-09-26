@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass
 
 import torch
@@ -12,6 +13,7 @@ from torch import Tensor, nn
 
 from dinov3.layers.dino_head import DINOHead
 from .model import DinoVisionTransformer3D
+from .recipe import binned_sinkhorn, entropy, normalize_prototype_layer, padded_head, position_bin_ids, target_stats
 
 
 class SSLNetwork3D(nn.Module):
@@ -24,6 +26,7 @@ class SSLNetwork3D(nn.Module):
         ibot_hidden_dim: int = 4096,
         dino_bottleneck_dim: int = 384,
         ibot_bottleneck_dim: int = 384,
+        normalize_prototypes: bool = True,
     ) -> None:
         super().__init__()
         self.backbone = backbone
@@ -41,6 +44,11 @@ class SSLNetwork3D(nn.Module):
             bottleneck_dim=ibot_bottleneck_dim,
             nlayers=3,
         )
+        if normalize_prototypes:
+            # FORA fix: cosine prototypes let the teacher commit from step 0 (plain std-0.02
+            # prototypes kept the Sinkhorn targets flat for thousands of steps).
+            normalize_prototype_layer(self.dino_head)
+            normalize_prototype_layer(self.ibot_head)
 
     def init_weights(self) -> None:
         self.backbone.init_weights()
@@ -184,6 +192,9 @@ class DINO3DLearner(nn.Module):
         ibot_loss_chunk_size: int = 1024,
         with_gram_anchor: bool = False,
         initialize_weights: bool = True,
+        normalize_prototypes: bool = True,
+        position_bins: tuple[int, int, int] | None = (2, 2, 2),
+        cross_view_weight: float = 1.0,
     ) -> None:
         super().__init__()
         self.student = SSLNetwork3D(
@@ -194,7 +205,11 @@ class DINO3DLearner(nn.Module):
             ibot_head_hidden_dim or head_hidden_dim,
             dino_bottleneck_dim,
             ibot_bottleneck_dim,
+            normalize_prototypes=normalize_prototypes,
         )
+        self.patch_size = tuple(int(v) for v in backbone.patch_size)
+        self.position_bins = tuple(int(v) for v in position_bins) if position_bins else None
+        self.cross_view_weight = float(cross_view_weight)
         if initialize_weights:
             self.student.init_weights()
         self.teacher = copy.deepcopy(self.student).requires_grad_(False)
@@ -248,6 +263,49 @@ class DINO3DLearner(nn.Module):
             self.gram_anchor.load_state_dict(self.teacher.state_dict())
         self.gram_anchor.eval()
 
+    def _cross_view(self, batch, t_patch, s_patch, teacher_temperature, grid, n_tokens, batch_size, weighted_mean):
+        """Cross-crop patch objective (FORA v14): for every token present in both global crops
+        (crops aligned on the patch lattice; ``cross_a``/``cross_b`` are flat indices of the twins
+        in view 0 / view 1), the student's patch prediction in one crop must match the teacher's
+        Sinkhorn target for the same voxels in the other crop, in both directions. Without it the
+        iBOT term only compares a token with the teacher's view of the SAME crop, and the
+        head-facing block learns where a token sits in the crop (position leakage)."""
+        device = s_patch.device
+        a = batch["cross_a"].to(device)
+        b = batch["cross_b"].to(device) + batch_size * n_tokens     # view 1 follows view 0
+        s_flat = s_patch.flatten(0, 1)
+        t_flat = t_patch.flatten(0, 1)
+        n_pairs = int(a.numel())
+        total_pairs = torch.tensor(n_pairs, device=device)
+        if dist.is_initialized():
+            dist.all_reduce(total_pairs)
+        zero = s_patch.sum() * 0.0
+        if int(total_pairs.item()) == 0:        # no sample on any rank has twins (all ranks agree)
+            return zero, {"cross": zero, "cross_kl": zero, "cross_pairs": zero}
+        with torch.no_grad():
+            t_tokens = torch.cat([t_flat.index_select(0, b), t_flat.index_select(0, a)])
+            t_logits, _ = padded_head(self.teacher.ibot_head, t_tokens)
+            teacher_rows = torch.cat([b, a])
+            if self.position_bins is not None:
+                q = binned_sinkhorn(distributed_sinkhorn, t_logits, teacher_temperature,
+                                    position_bin_ids(teacher_rows, n_tokens, grid, self.position_bins),
+                                    math.prod(self.position_bins))
+            else:
+                q = distributed_sinkhorn(t_logits, teacher_temperature)
+        s_tokens = torch.cat([s_flat.index_select(0, a), s_flat.index_select(0, b)])
+        s_logits, anchor = padded_head(self.student.ibot_head, s_tokens)
+        if n_pairs == 0:
+            return zero + anchor, {"cross": zero, "cross_kl": zero, "cross_pairs": zero}
+        logp = F.log_softmax(s_logits.float() / self.student_temperature, dim=-1)
+        ce = -(q * logp).sum(-1)
+        sample_ids = torch.cat([batch["cross_sample"], batch["cross_sample"]]).to(device)
+        counts = torch.bincount(sample_ids, minlength=batch_size).clamp_min(1).float()
+        per_sample = torch.zeros(batch_size, device=device).scatter_add_(0, sample_ids, ce) / counts
+        per_sample_h = torch.zeros(batch_size, device=device).scatter_add_(0, sample_ids, entropy(q)) / counts
+        cross = weighted_mean(per_sample) + anchor
+        return cross, {"cross": cross.detach(), "cross_kl": (cross - weighted_mean(per_sample_h)).detach(),
+                       "cross_pairs": torch.tensor(float(n_pairs), device=device)}
+
     def forward(self, batch: dict, teacher_temperature: float, step: int) -> tuple[Tensor, dict[str, Tensor]]:
         teacher_images = batch["teacher_global"]  # [2,B,1,D,H,W]
         student_images = batch["student_global"]
@@ -284,8 +342,19 @@ class DINO3DLearner(nn.Module):
             t_patch = tout["x_norm_patchtokens"]
             t_masked = t_patch.flatten(0, 1).index_select(0, mask_indices)
             t_patch_logits = self.teacher.ibot_head(t_masked)
-            t_cls_prob = distributed_sinkhorn(t_cls_logits, teacher_temperature).unflatten(0, (n_global, batch_size))
-            t_patch_prob = distributed_sinkhorn(t_patch_logits, teacher_temperature)
+            t_cls_flat = distributed_sinkhorn(t_cls_logits, teacher_temperature)
+            t_cls_prob = t_cls_flat.unflatten(0, (n_global, batch_size))
+            n_tokens = int(masks.shape[-1])
+            grid = tuple(n // p for n, p in zip(teacher_images.shape[-3:], self.patch_size))
+            if self.position_bins is not None:
+                # FORA fix (CAPI): balance patch targets within spatial bins of the crop.
+                t_patch_prob = binned_sinkhorn(
+                    distributed_sinkhorn, t_patch_logits, teacher_temperature,
+                    position_bin_ids(mask_indices, n_tokens, grid, self.position_bins),
+                    math.prod(self.position_bins),
+                )
+            else:
+                t_patch_prob = distributed_sinkhorn(t_patch_logits, teacher_temperature)
             del t_patch_logits, t_masked
 
         global_out, local_out = self.student.backbone(
@@ -375,14 +444,43 @@ class DINO3DLearner(nn.Module):
             ).unflatten(0, (n_global, batch_size)).mean(0)
             gram = weighted_mean(gram_each)
 
+        # Teacher-target diagnostics (FORA fix): CE = H(target) + KL, so the raw loss hides
+        # whether the student learns; log H, KL = CE - H (weighted like the losses), top-1, usage.
+        with torch.no_grad():
+            cls_stats = target_stats(t_cls_flat)
+            patch_stats = target_stats(t_patch_prob)
+            h_cls = weighted_mean(entropy(t_cls_prob).mean(0))
+            h_rows = entropy(t_patch_prob)
+            h_mask = torch.zeros(masks.shape[0], device=h_rows.device, dtype=h_rows.dtype)
+            h_mask.scatter_add_(0, mask_ids, h_rows * mask_weights)
+            h_patch = weighted_mean(h_mask.unflatten(0, (n_global, batch_size)).mean(0))
+
+        cross = dino.new_zeros(())
+        cross_metrics = {"cross": cross, "cross_kl": cross, "cross_pairs": cross}
+        if self.cross_view_weight > 0 and "cross_a" in batch:
+            cross, cross_metrics = self._cross_view(
+                batch, t_patch, global_out["x_norm_patchtokens"], teacher_temperature,
+                grid, n_tokens, batch_size, weighted_mean,
+            )
+
         total = (
             self.weights.dino * dino
             + self.weights.ibot * ibot
             + self.weights.koleo * koleo
             + self.weights.gram * gram
+            + self.cross_view_weight * cross
         )
         return total, {
             "loss": total.detach(),
+            "dino_target_entropy": cls_stats["entropy"],
+            "ibot_target_entropy": patch_stats["entropy"],
+            "dino_target_top1": cls_stats["top1"],
+            "ibot_target_top1": patch_stats["top1"],
+            "dino_prototype_usage": cls_stats["usage"],
+            "ibot_prototype_usage": patch_stats["usage"],
+            "dino_kl": (weighted_mean(dino_global) - h_cls).detach(),
+            "ibot_kl": (ibot - h_patch).detach(),
+            **{k: v.detach() for k, v in cross_metrics.items()},
             "dino": dino.detach(),
             "dino_global": weighted_mean(dino_global).detach(),
             "dino_local": weighted_mean(dino_local).detach(),

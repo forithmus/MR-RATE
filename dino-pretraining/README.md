@@ -53,6 +53,39 @@ masking, distributed KoLeo, optional Gram anchoring, EMA teacher, atomic full
 state checkpoints, exact sampler/RNG resume, FSDP2, BF16, optional H200 FP8,
 and compile caches on node-local `/tmp`.
 
+## Recipe fixes ported from FORA CT-DINO (Sep 2026)
+
+The CT pipeline this module was adapted from started with the same DINOv3-7B continuation
+settings and failed; each item below is a diagnosed failure and the fix the working FORA
+ViT-L run uses (code: `mr_dino/recipe.py`, `objective.py`, `data.py`; tests:
+`tests/test_fora_recipe.py`). All are on by default.
+
+| Problem seen in FORA | Fix (default) |
+|---|---|
+| DINOv3 plain-linear prototype layer (std 0.02) never sharpened at lr 5e-5 → flat Sinkhorn targets for 10k steps (iBOT target entropy 8.0/11.5 nats, top-1 0.006) | cosine prototypes on both heads (`--normalize-prototypes`) |
+| 1k warmup + 7B settings drove positional drift in the last blocks | DINOv2 ViT-L recipe: lr 1e-3 at batch 1024 (sqrt-scaled), warmup 2,500, teacher-temperature warmup 0.04→0.07 over 10k, weight decay 0.04→0.4, EMA 0.992→1, AdamW β2 0.999, clip 3, layer-wise lr decay 0.9, patch-embed lr ×0.2, prototype layers frozen for 1,250 steps |
+| 7B continuation was worse than a from-scratch ViT-L at the same budget | `--arch large` (ViT-L, 16k/16k prototypes, heads 2048/256), batch 8/GPU, no FP8, no activation checkpointing |
+| global crops overlapping ≥75% were near-duplicates | ≥25% overlap per axis (`--global-overlap`), locals inside one of the two globals |
+| head-facing block encoded where a token sat in its crop (last-block position leakage 0.20, crop-quadrant prototype fields) | second global snapped to the patch lattice + **cross-crop twin-token objective** (`--cross-view-weight 1.0`): the student's patch prediction in one crop matches the teacher target of the same voxels in the other crop; leakage fell to 0.09 and stayed flat |
+| patch targets balanced over all masked tokens at once | Sinkhorn within 2×2×2 spatial bins of the crop (`--position-bins`, CAPI) |
+| raw loss hid whether the student learned (CE = H + KL) | `metrics.jsonl` logs `dino/ibot_target_entropy`, `_top1`, `_prototype_usage`, `dino_kl`, `ibot_kl`, `cross`, `cross_kl`, `cross_pairs` |
+
+Already fixed here before the port: the distributed Sinkhorn uses the actual global token count.
+
+**MR-specific choice:** twin tokens are paired only when both global crops show the same
+sequence (`--cross-view-sequences same`), preserving this module's rule that cross-sequence
+images are never patch-level targets. With `--cross-sequence-probability 0.75` that is ~25% of
+samples; `any` would also pair co-registered voxels across contrasts (contrast-invariant patch
+features, at the risk of suppressing lesions visible in only one sequence).
+
+Production: `scripts/train_32n_vitl.sbatch`. `train_32n_7b.sbatch` / `train_32n_hplus.sbatch`
+keep the old recipe for reference only.
+
+**Healthy early training (FORA reference, ViT-L, global batch 128–1024):** iBOT target top-1
+rises from ~0.003 to >0.05 within 2.5k steps, patch target entropy falls, prototype usage stays
+≳0.4, `cross_kl` ~1.5–2.5 without a rising trend. Gram anchoring (stage `gram`) gave no gain in
+FORA and stays optional.
+
 ## Optional input-volume cache
 
 From `contrastive-pretraining/`:
@@ -113,12 +146,12 @@ cd dino-pretraining
 DATA_FOLDER=/path/to/MR-RATE-atlas/mri \
 SPLITS_CSV=/path/to/splits.csv \
 OUTPUT=/path/to/mrdino3d_7b/pretrain \
-sbatch scripts/train_32n_7b.sbatch
+sbatch scripts/train_32n_vitl.sbatch   # FORA recipe (ViT-L); 7B launcher kept as legacy
 ```
 
 Important overrides are `STEPS`, `BATCH_SIZE`, `GRAD_ACCUM_STEPS`, `WORKERS`,
 `LOCAL_CROPS`, `CROSS_SEQUENCE_PROBABILITY`, `WARMUP_STEPS`, `RESUME`, `FP8`,
-and `COMPILE`. The default warmup is 1,000 optimizer steps. `RESUME=latest`
+and `COMPILE`. The default warmup is 2,500 optimizer steps (FORA recipe). `RESUME=latest`
 loads the latest checkpoint only when its `COMPLETE` marker exists.
 
 For later stages:

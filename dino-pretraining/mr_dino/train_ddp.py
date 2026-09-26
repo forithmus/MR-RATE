@@ -32,6 +32,7 @@ from .data import (
     stage_crop_spec,
 )
 from .model import DinoVisionTransformer3D, vit_7b_3d, vit_hplus_3d, vit_large_3d
+from .recipe import cancel_last_layer_gradients, make_optimizer
 from .objective import DINO3DLearner, LossWeights
 
 
@@ -48,22 +49,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
-    p.add_argument("--arch", choices=("tiny", "large", "hplus"), default="hplus")
-    p.add_argument("--steps", type=int, default=100_000)
+    p.add_argument("--arch", choices=("tiny", "large", "hplus"), default="large")
+    p.add_argument("--steps", type=int, default=125_000)
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=3407)
-    p.add_argument("--prototypes", type=int, default=65_536)
-    p.add_argument("--head-hidden-dim", type=int, default=4096)
-    p.add_argument("--lr", type=float, default=2e-4, help="Base LR before sqrt(global_batch/1024) scaling")
+    p.add_argument("--prototypes", type=int, default=16_384)
+    p.add_argument("--head-hidden-dim", type=int, default=2048)
+    p.add_argument("--bottleneck-dim", type=int, default=256)
+    p.add_argument("--lr", type=float, default=1e-3, help="Base LR before sqrt(global_batch/1024) scaling (DINOv2 ViT-L)")
     p.add_argument("--min-lr", type=float, default=1e-6)
-    p.add_argument("--warmup-steps", type=int, default=5_000)
+    p.add_argument("--warmup-steps", type=int, default=2_500)
     p.add_argument("--weight-decay", type=float, default=0.04)
     p.add_argument("--weight-decay-end", type=float, default=0.4)
-    p.add_argument("--teacher-momentum", type=float, default=0.994)
+    p.add_argument("--teacher-momentum", type=float, default=0.992)
     p.add_argument("--teacher-temperature", type=float, default=0.07)
     p.add_argument("--teacher-warmup-temperature", type=float, default=0.04)
-    p.add_argument("--teacher-warmup-steps", type=int, default=5_000)
+    p.add_argument("--teacher-warmup-steps", type=int, default=10_000)
     p.add_argument("--mask-min", type=float, default=0.1)
     p.add_argument("--mask-max", type=float, default=0.5)
     p.add_argument("--ibot-weight", type=float, default=1.0)
@@ -80,13 +82,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--posterior-shift-mm", type=float, default=15.0)
     p.add_argument("--cross-sequence-probability", type=float, default=0.75)
     p.add_argument("--candidate-trials", type=int, default=12)
-    p.add_argument("--save-every", type=int, default=250)
-    p.add_argument("--keep-checkpoints", type=int, default=3)
+    p.add_argument("--save-every", type=int, default=500)
+    p.add_argument("--keep-checkpoints", type=int, default=6)
     p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--resume", default="latest", help="latest, none, or a checkpoint path")
     p.add_argument("--activation-checkpointing", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--max-studies", type=int, default=None, help="Smoke only: cap studies assigned to each rank")
     p.add_argument("--deadline-margin-seconds", type=int, default=900)
+    # FORA recipe fixes (see mr_dino/recipe.py)
+    p.add_argument("--global-overlap", type=float, default=0.25)
+    p.add_argument("--normalize-prototypes", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--position-bins", type=int, nargs=3, default=(2, 2, 2))
+    p.add_argument("--cross-view-weight", type=float, default=1.0)
+    p.add_argument("--cross-view-sequences", choices=("same", "any", "none"), default="same")
+    p.add_argument("--layerwise-decay", type=float, default=0.9)
+    p.add_argument("--patch-embed-lr-mult", type=float, default=0.2)
+    p.add_argument("--freeze-last-layer-steps", type=int, default=1250)
+    p.add_argument("--clip-grad", type=float, default=3.0)
     return p.parse_args()
 
 
@@ -531,6 +543,7 @@ def main() -> int:
         cross_sequence_probability=args.cross_sequence_probability,
         candidate_trials=args.candidate_trials,
         seed=args.seed,
+        global_overlap=args.global_overlap,
     )
     local_instances = torch.tensor(len(dataset), device=device, dtype=torch.long)
     total_instances = local_instances.clone()
@@ -548,6 +561,7 @@ def main() -> int:
         collate_dino3d,
         patch_size=(2, 16, 16),
         mask_ratio=(args.mask_min, args.mask_max),
+        cross_view_sequences=args.cross_view_sequences if args.cross_view_weight > 0 else "none",
     )
     loader = DataLoader(
         dataset,
@@ -566,6 +580,11 @@ def main() -> int:
         backbone,
         prototypes=args.prototypes,
         head_hidden_dim=args.head_hidden_dim,
+        dino_bottleneck_dim=args.bottleneck_dim,
+        ibot_bottleneck_dim=args.bottleneck_dim,
+        normalize_prototypes=args.normalize_prototypes,
+        position_bins=None if tuple(args.position_bins) == (1, 1, 1) else tuple(args.position_bins),
+        cross_view_weight=args.cross_view_weight,
         loss_weights=LossWeights(
             dino=1.0,
             ibot=args.ibot_weight,
@@ -582,7 +601,11 @@ def main() -> int:
             learner.student.backbone.blocks[i] = checkpoint_wrapper(block)
     learner.to(device)
     trainable = [p for p in learner.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable, lr=args.lr, betas=(0.9, 0.999), weight_decay=args.weight_decay)
+    optimizer = make_optimizer(
+        learner.student, lr=args.lr, weight_decay=args.weight_decay, betas=(0.9, 0.999),
+        layerwise_decay=args.layerwise_decay, patch_embed_lr_mult=args.patch_embed_lr_mult,
+        n_blocks=len(learner.student.backbone.blocks), fused=device.type == "cuda",
+    )
     if world > 1:
         learner = DDP(
             learner,
@@ -657,12 +680,15 @@ def main() -> int:
         if not finite.item():
             raise FloatingPointError(f"Non-finite distributed loss at step {step}: {loss.detach()}")
         backward_loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(trainable, 3.0)
+        if step < args.freeze_last_layer_steps:
+            cancel_last_layer_gradients(unwrap(learner).student)   # DINO/DINOv2 freeze_last_layer
+        grad_norm = torch.nn.utils.clip_grad_norm_(trainable, args.clip_grad)
         optimizer.step()
         unwrap(learner).update_teacher(momentum)
 
         if (step + 1) % args.log_every == 0:
-            values = torch.stack([metrics[k].float() for k in ("loss", "dino", "ibot", "koleo", "gram")])
+            metric_keys = sorted(metrics)
+            values = torch.stack([metrics[k].float() for k in metric_keys])
             if dist.is_initialized():
                 dist.all_reduce(values)
                 values /= world
@@ -676,11 +702,7 @@ def main() -> int:
                     "sequence_epoch": (
                         (step + 1) * global_batch / int(total_instances)
                     ),
-                    "loss": float(values[0]),
-                    "dino": float(values[1]),
-                    "ibot": float(values[2]),
-                    "koleo": float(values[3]),
-                    "gram": float(values[4]),
+                    **{k: float(v) for k, v in zip(metric_keys, values)},
                     "lr": lr,
                     "weight_decay": wd,
                     "teacher_momentum": momentum,
