@@ -33,7 +33,7 @@ from .data import (
 )
 from .fp8 import enable_fsdp_mixed_precision_fp8
 from .objective import DINO3DLearner, LossWeights
-from .recipe import cancel_last_layer_gradients, make_optimizer
+from .recipe import cancel_last_layer_gradients, make_optimizer, missing_frozen_optimizer_keys
 from .train_ddp import (
     StopController,
     balanced_file_assignment,
@@ -378,11 +378,17 @@ def load_checkpoint(
             "refusing an inexact sampler resume"
         )
     source_stage = metadata["stage"]
+    same_stage = source_stage == args.stage
+    # checkpoints written during freeze_last_layer have no optimizer state for the frozen prototype layers
+    frozen_missing = missing_frozen_optimizer_keys(path, learner, optimizer) if same_stage else []
+    if frozen_missing and rank == 0:
+        print(f"[resume] {len(frozen_missing)} optimizer-state keys of frozen last_layer params absent "
+              "(saved during freeze_last_layer); they start fresh", flush=True)
     loaded_step = int(dcp_load(
         path,
         model=learner,
         optimizer=optimizer,
-        strict_loading=(source_stage == args.stage),
+        strict_loading=same_stage and not frozen_missing,
     ))
     state = torch.load(path / f"runtime_rank{rank:04d}.pt", map_location="cpu", weights_only=False)
     sampler.set_offset(int(state["sampler_offset"]))

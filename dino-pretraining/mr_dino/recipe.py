@@ -176,6 +176,25 @@ def cancel_last_layer_gradients(student: nn.Module) -> int:
     return count
 
 
+def missing_frozen_optimizer_keys(ckpt_dir, model: nn.Module, optimizer: torch.optim.Optimizer) -> list[str]:
+    """Checkpoint keys the resume would miss that are legitimately absent: optimizer state of the ``last_layer``
+    prototype weights, which never receive a gradient during ``freeze_last_layer`` (``cancel_last_layer_gradients``
+    sets ``grad=None``, so AdamW never creates their state and checkpoints saved in the first
+    ``--freeze-last-layer-steps`` steps do not contain it). Any OTHER missing model/optimizer key raises, so a
+    partial load can never silently skip real weights. Returns the allowed missing keys (empty = strict load)."""
+    from torch.distributed.checkpoint import FileSystemReader
+    from torch.distributed.checkpoint._nested_dict import flatten_state_dict
+    from torch.distributed.checkpoint.state_dict import get_model_state_dict, get_optimizer_state_dict
+    saved = set(FileSystemReader(str(ckpt_dir)).read_metadata().state_dict_metadata)
+    want, _ = flatten_state_dict({"model": get_model_state_dict(model),
+                                  "optimizer": get_optimizer_state_dict(model, optimizer)})
+    missing = [k for k in want if k not in saved]
+    bad = [k for k in missing if not (k.startswith("optimizer.state.") and ".last_layer." in k)]
+    if bad:
+        raise RuntimeError(f"Checkpoint {ckpt_dir} lacks {len(bad)} required keys, e.g. {bad[:5]}")
+    return missing
+
+
 # ----------------------------------------------------------------------------- twin tokens
 def snap_second_start(origin, second, container_shape, crop_shape, patch):
     """Move ``second`` so that (second - origin) is a multiple of the patch on every axis,
