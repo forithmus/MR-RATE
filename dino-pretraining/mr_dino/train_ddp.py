@@ -1,4 +1,4 @@
-"""Distributed, resumable 3-D DINOv3 training for atlas-registered MR-RATE."""
+"""Distributed, resumable 3-D DINOv3 training for aligned (coreg/atlas) MR-RATE."""
 
 from __future__ import annotations
 
@@ -23,47 +23,71 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
 from .data import (
-    MRAtlasDINO3DDataset,
+    ALIGNED_SPACES,
+    DEFAULT_SPACE,
+    MRAlignedDINO3DDataset,
     InfiniteStudySampler,
     collate_dino3d,
-    discover_atlas_cache,
-    discover_raw_atlas_split,
+    discover_aligned_cache,
+    discover_raw_aligned_split,
     npz_volume_shape,
     stage_crop_spec,
 )
 from .model import DinoVisionTransformer3D, vit_7b_3d, vit_hplus_3d, vit_large_3d
+from .recipe import cancel_last_layer_gradients, make_optimizer
 from .objective import DINO3DLearner, LossWeights
+
+
+CHECKPOINT_FORMAT = "mrrate_aligned_dinov3d_full_v1"
+# Checkpoints written before the coreg switch: same contents, always atlas space.
+_LEGACY_ATLAS_FORMATS = {
+    "mrrate_aligned_dinov3d_full_v1": "mrrate_atlas_dinov3d_full_v1",
+    "mrrate_aligned_dinov3d_fsdp2_v1": "mrrate_atlas_dinov3d_fsdp2_v1",
+}
+
+
+def check_checkpoint_space(fmt: str | None, saved_args: dict, space: str, expected: str) -> None:
+    """Refuse to resume across MR spaces."""
+    if fmt == expected:
+        saved_space = saved_args.get("space")
+    elif fmt == _LEGACY_ATLAS_FORMATS.get(expected):
+        saved_space = "atlas_space"
+    else:
+        raise RuntimeError(f"Checkpoint format {fmt!r} is not an MR DINO checkpoint ({expected})")
+    if saved_space != space:
+        raise RuntimeError(f"Checkpoint was trained on {saved_space!r}; this run uses {space!r}")
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("--preprocessed-dir", help="MR-RATE cache root containing atlas_space/*.npz")
+    source.add_argument("--preprocessed-dir", help="MR-RATE cache root containing <space>/*.npz")
     source.add_argument(
         "--data-folder",
-        help="MR-RATE-atlas NIfTI tree; uses the same live loader as previous MIL training",
+        help="MR-RATE-coreg (or -atlas) NIfTI tree; uses the same live loader as previous MIL training",
     )
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
-    p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
+    p.add_argument("--space", default=DEFAULT_SPACE, choices=ALIGNED_SPACES)
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
-    p.add_argument("--arch", choices=("tiny", "large", "hplus"), default="hplus")
-    p.add_argument("--steps", type=int, default=100_000)
+    p.add_argument("--arch", choices=("tiny", "large", "hplus"), default="large")
+    p.add_argument("--steps", type=int, default=50_000)
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=3407)
-    p.add_argument("--prototypes", type=int, default=65_536)
-    p.add_argument("--head-hidden-dim", type=int, default=4096)
-    p.add_argument("--lr", type=float, default=2e-4, help="Base LR before sqrt(global_batch/1024) scaling")
+    p.add_argument("--prototypes", type=int, default=16_384)
+    p.add_argument("--head-hidden-dim", type=int, default=2048)
+    p.add_argument("--bottleneck-dim", type=int, default=256)
+    p.add_argument("--lr", type=float, default=1e-3, help="Base LR before sqrt(global_batch/1024) scaling (DINOv2 ViT-L)")
     p.add_argument("--min-lr", type=float, default=1e-6)
-    p.add_argument("--warmup-steps", type=int, default=5_000)
+    p.add_argument("--warmup-steps", type=int, default=2_500)
     p.add_argument("--weight-decay", type=float, default=0.04)
     p.add_argument("--weight-decay-end", type=float, default=0.4)
-    p.add_argument("--teacher-momentum", type=float, default=0.994)
+    p.add_argument("--teacher-momentum", type=float, default=0.992)
     p.add_argument("--teacher-temperature", type=float, default=0.07)
     p.add_argument("--teacher-warmup-temperature", type=float, default=0.04)
-    p.add_argument("--teacher-warmup-steps", type=int, default=5_000)
+    p.add_argument("--teacher-warmup-steps", type=int, default=10_000)
     p.add_argument("--mask-min", type=float, default=0.1)
     p.add_argument("--mask-max", type=float, default=0.5)
     p.add_argument("--ibot-weight", type=float, default=1.0)
@@ -78,15 +102,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target-spacing", type=float, nargs=3, default=(1.0, 0.5, 0.5))
     p.add_argument("--target-shape", type=int, nargs=3, default=(256, 384, 384))
     p.add_argument("--posterior-shift-mm", type=float, default=15.0)
-    p.add_argument("--cross-sequence-probability", type=float, default=0.75)
+    p.add_argument("--cross-sequence-probability", type=float, default=0.25)
     p.add_argument("--candidate-trials", type=int, default=12)
-    p.add_argument("--save-every", type=int, default=250)
-    p.add_argument("--keep-checkpoints", type=int, default=3)
+    p.add_argument("--save-every", type=int, default=500)
+    p.add_argument("--keep-checkpoints", type=int, default=6)
     p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--resume", default="latest", help="latest, none, or a checkpoint path")
     p.add_argument("--activation-checkpointing", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--max-studies", type=int, default=None, help="Smoke only: cap studies assigned to each rank")
     p.add_argument("--deadline-margin-seconds", type=int, default=900)
+    # FORA recipe fixes (see mr_dino/recipe.py)
+    p.add_argument("--global-overlap", type=float, default=0.25)
+    p.add_argument("--normalize-prototypes", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--position-bins", type=int, nargs=3, default=(2, 2, 2))
+    p.add_argument("--cross-view-weight", type=float, default=1.0)
+    p.add_argument("--cross-view-sequences", choices=("same", "any", "none"), default="same")
+    p.add_argument("--layerwise-decay", type=float, default=0.9)
+    p.add_argument("--patch-embed-lr-mult", type=float, default=0.2)
+    p.add_argument("--freeze-last-layer-steps", type=int, default=1250)
+    p.add_argument("--clip-grad", type=float, default=3.0)
     return p.parse_args()
 
 
@@ -107,9 +141,9 @@ def read_train_files(
     preprocessed_dir: str,
     splits_csv: str | None,
     split: str,
-    space: str = "atlas_space",
+    space: str = DEFAULT_SPACE,
 ) -> list[str]:
-    return [sample["cache_path"] for sample in discover_atlas_cache(
+    return [sample["cache_path"] for sample in discover_aligned_cache(
         preprocessed_dir, splits_csv=splits_csv, split=split, space=space
     )]
 
@@ -136,6 +170,7 @@ def raw_fingerprint(
     target_spacing: tuple[float, float, float] = (1.0, 0.5, 0.5),
     target_shape: tuple[int, int, int] = (256, 384, 384),
     posterior_shift_mm: float = 15.0,
+    space: str = DEFAULT_SPACE,
 ) -> str:
     """Fingerprint raw studies without tying exact resume to an absolute mount path."""
     records = []
@@ -151,7 +186,7 @@ def raw_fingerprint(
             "world": world,
             "max_studies_per_rank": max_studies_per_rank,
             "preprocessing": {
-                "space": "atlas_space",
+                "space": space,
                 "normalizer": "zscore",
                 "target_spacing": list(target_spacing),
                 "target_shape": list(target_shape),
@@ -216,16 +251,17 @@ def distributed_raw_assignment(
     target_spacing: tuple[float, float, float],
     target_shape: tuple[int, int, int],
     posterior_shift_mm: float,
+    space: str = DEFAULT_SPACE,
 ) -> tuple[list[dict], str]:
     """Discover once on rank 0 and publish one small assignment file per rank."""
     assignment_dir = output / "dataset_assignments"
     metadata_path = assignment_dir / "metadata.json"
     if rank == 0:
-        samples = discover_raw_atlas_split(
-            data_folder, splits_csv=splits_csv, split=split
+        samples = discover_raw_aligned_split(
+            data_folder, splits_csv=splits_csv, split=split, space=space
         )
         if len(samples) < world:
-            raise RuntimeError(f"{len(samples)} atlas studies cannot supply {world} ranks")
+            raise RuntimeError(f"{len(samples)} {space} studies cannot supply {world} ranks")
         fingerprint = raw_fingerprint(
             samples,
             world,
@@ -233,12 +269,13 @@ def distributed_raw_assignment(
             target_spacing,
             target_shape,
             posterior_shift_mm,
+            space,
         )
         assignments = balanced_sample_assignment(samples, world)
         if max_studies_per_rank:
             assignments = [items[:max_studies_per_rank] for items in assignments]
         if any(not items for items in assignments):
-            raise RuntimeError("Raw atlas assignment left at least one distributed rank empty")
+            raise RuntimeError("Raw assignment left at least one distributed rank empty")
         assignment_dir.mkdir(parents=True, exist_ok=True)
         for assigned_rank, items in enumerate(assignments):
             destination = assignment_dir / f"rank_{assigned_rank:04d}.json"
@@ -246,7 +283,8 @@ def distributed_raw_assignment(
             temporary.write_text(json.dumps(items, separators=(",", ":")))
             os.replace(temporary, destination)
         metadata = {
-            "format": "mrrate_atlas_raw_assignment_v1",
+            "format": "mrrate_aligned_raw_assignment_v1",
+            "space": space,
             "world_size": world,
             "dataset_fingerprint": fingerprint,
             "split": split,
@@ -257,13 +295,13 @@ def distributed_raw_assignment(
     if dist.is_initialized():
         dist.barrier()
     metadata = json.loads(metadata_path.read_text())
-    if metadata.get("format") != "mrrate_atlas_raw_assignment_v1":
-        raise RuntimeError(f"Invalid raw atlas assignment metadata: {metadata_path}")
+    if metadata.get("format") != "mrrate_aligned_raw_assignment_v1" or metadata.get("space") != space:
+        raise RuntimeError(f"Invalid or other-space raw assignment metadata: {metadata_path}")
     if int(metadata.get("world_size", -1)) != world:
-        raise RuntimeError("Raw atlas assignment world size changed during startup")
+        raise RuntimeError("Raw assignment world size changed during startup")
     assigned = json.loads((assignment_dir / f"rank_{rank:04d}.json").read_text())
     if not assigned:
-        raise RuntimeError(f"Rank {rank} received no raw atlas studies")
+        raise RuntimeError(f"Rank {rank} received no raw {space} studies")
     return assigned, str(metadata["dataset_fingerprint"])
 
 
@@ -358,7 +396,7 @@ def save_checkpoint(
         rng_by_rank = [local_rng]
     if rank == 0:
         state = {
-            "format": "mrrate_atlas_dinov3d_full_v1",
+            "format": CHECKPOINT_FORMAT,
             "step": step,
             "stage": args.stage,
             "world_size": dist.get_world_size() if dist.is_initialized() else 1,
@@ -395,16 +433,14 @@ def load_checkpoint(
     current_stage: str,
     dataset_fingerprint: str | None,
     world: int,
+    current_space: str = DEFAULT_SPACE,
 ) -> int:
     if not path.exists():
         if rank == 0:
             print(f"[resume] {path} not found; starting from scratch", flush=True)
         return 0
     state = torch.load(path, map_location="cpu", weights_only=False)
-    if state.get("format") != "mrrate_atlas_dinov3d_full_v1":
-        raise RuntimeError(
-            f"Checkpoint format {state.get('format')!r} is not atlas-space MR DINO"
-        )
+    check_checkpoint_space(state.get("format"), state.get("args", {}), current_space, CHECKPOINT_FORMAT)
     if int(state.get("world_size", world)) != world:
         raise RuntimeError("Exact DDP resume requires the checkpoint's original world size")
     saved_fingerprint = state.get("args", {}).get("dataset_fingerprint")
@@ -505,6 +541,7 @@ def main() -> int:
             target_spacing=tuple(args.target_spacing),
             target_shape=tuple(args.target_shape),
             posterior_shift_mm=args.posterior_shift_mm,
+            space=args.space,
         )
         dataset_kwargs = {
             "data_folder": args.data_folder,
@@ -519,7 +556,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRAtlasDINO3DDataset(
+    dataset = MRAlignedDINO3DDataset(
         **dataset_kwargs,
         splits_csv=args.splits_csv,
         split=args.split,
@@ -531,6 +568,7 @@ def main() -> int:
         cross_sequence_probability=args.cross_sequence_probability,
         candidate_trials=args.candidate_trials,
         seed=args.seed,
+        global_overlap=args.global_overlap,
     )
     local_instances = torch.tensor(len(dataset), device=device, dtype=torch.long)
     total_instances = local_instances.clone()
@@ -548,6 +586,7 @@ def main() -> int:
         collate_dino3d,
         patch_size=(2, 16, 16),
         mask_ratio=(args.mask_min, args.mask_max),
+        cross_view_sequences=args.cross_view_sequences if args.cross_view_weight > 0 else "none",
     )
     loader = DataLoader(
         dataset,
@@ -566,6 +605,11 @@ def main() -> int:
         backbone,
         prototypes=args.prototypes,
         head_hidden_dim=args.head_hidden_dim,
+        dino_bottleneck_dim=args.bottleneck_dim,
+        ibot_bottleneck_dim=args.bottleneck_dim,
+        normalize_prototypes=args.normalize_prototypes,
+        position_bins=None if tuple(args.position_bins) == (1, 1, 1) else tuple(args.position_bins),
+        cross_view_weight=args.cross_view_weight,
         loss_weights=LossWeights(
             dino=1.0,
             ibot=args.ibot_weight,
@@ -582,7 +626,11 @@ def main() -> int:
             learner.student.backbone.blocks[i] = checkpoint_wrapper(block)
     learner.to(device)
     trainable = [p for p in learner.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable, lr=args.lr, betas=(0.9, 0.999), weight_decay=args.weight_decay)
+    optimizer = make_optimizer(
+        learner.student, lr=args.lr, weight_decay=args.weight_decay, betas=(0.9, 0.999),
+        layerwise_decay=args.layerwise_decay, patch_embed_lr_mult=args.patch_embed_lr_mult,
+        n_blocks=len(learner.student.backbone.blocks), fused=device.type == "cuda",
+    )
     if world > 1:
         learner = DDP(
             learner,
@@ -595,7 +643,7 @@ def main() -> int:
 
     start = load_checkpoint(
         checkpoint_path(output, args.resume), learner, optimizer, sampler, device, rank,
-        args.stage, args.dataset_fingerprint, world,
+        args.stage, args.dataset_fingerprint, world, args.space,
     ) if checkpoint_path(output, args.resume) else 0
     consumed_samples = sampler.offset
     # Cross-stage resume fixes the new Gram target to the incoming EMA teacher.
@@ -657,12 +705,15 @@ def main() -> int:
         if not finite.item():
             raise FloatingPointError(f"Non-finite distributed loss at step {step}: {loss.detach()}")
         backward_loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(trainable, 3.0)
+        if step < args.freeze_last_layer_steps:
+            cancel_last_layer_gradients(unwrap(learner).student)   # DINO/DINOv2 freeze_last_layer
+        grad_norm = torch.nn.utils.clip_grad_norm_(trainable, args.clip_grad)
         optimizer.step()
         unwrap(learner).update_teacher(momentum)
 
         if (step + 1) % args.log_every == 0:
-            values = torch.stack([metrics[k].float() for k in ("loss", "dino", "ibot", "koleo", "gram")])
+            metric_keys = sorted(metrics)
+            values = torch.stack([metrics[k].float() for k in metric_keys])
             if dist.is_initialized():
                 dist.all_reduce(values)
                 values /= world
@@ -676,11 +727,7 @@ def main() -> int:
                     "sequence_epoch": (
                         (step + 1) * global_batch / int(total_instances)
                     ),
-                    "loss": float(values[0]),
-                    "dino": float(values[1]),
-                    "ibot": float(values[2]),
-                    "koleo": float(values[3]),
-                    "gram": float(values[4]),
+                    **{k: float(v) for k, v in zip(metric_keys, values)},
                     "lr": lr,
                     "weight_decay": wd,
                     "teacher_momentum": momentum,

@@ -1,4 +1,4 @@
-"""FSDP2 training for the literal DINOv3 ViT-7B on atlas-registered MR-RATE."""
+"""FSDP2 3-D DINOv3 training (ViT-L default) on aligned (coreg/atlas) MR-RATE."""
 
 from __future__ import annotations
 
@@ -26,16 +26,20 @@ from dinov3.checkpointer import save_checkpoint as dcp_save
 from dinov3.layers.fp8_linear import convert_linears_to_fp8
 
 from .data import (
-    MRAtlasDINO3DDataset,
+    ALIGNED_SPACES,
+    DEFAULT_SPACE,
+    MRAlignedDINO3DDataset,
     InfiniteStudySampler,
     collate_dino3d,
     stage_crop_spec,
 )
 from .fp8 import enable_fsdp_mixed_precision_fp8
 from .objective import DINO3DLearner, LossWeights
+from .recipe import cancel_last_layer_gradients, make_optimizer, missing_frozen_optimizer_keys
 from .train_ddp import (
     StopController,
     balanced_file_assignment,
+    check_checkpoint_space,
     build_backbone,
     cache_fingerprint,
     cosine,
@@ -46,29 +50,34 @@ from .train_ddp import (
 )
 
 
+CHECKPOINT_FORMAT = "mrrate_aligned_dinov3d_fsdp2_v1"
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--data-folder",
-        help="MR-RATE-atlas NIfTI tree; uses the same live loader as previous MIL training",
+        help="MR-RATE-coreg (or -atlas) NIfTI tree; uses the same live loader as previous MIL training",
     )
     source.add_argument(
         "--preprocessed-dir",
-        help="Optional MR-RATE volume cache root containing atlas_space/*.npz",
+        help="Optional MR-RATE volume cache root containing <space>/*.npz",
     )
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
-    p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
+    p.add_argument("--space", default=DEFAULT_SPACE, choices=ALIGNED_SPACES,
+                   help="coreg_space (default): sequences on the center T1's native grid; atlas_space: MNI 1 mm box")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
-    p.add_argument("--arch", choices=("tiny", "7b"), default="7b")
-    p.add_argument("--steps", type=int, default=100_000)
-    p.add_argument("--batch-size", type=int, default=1)
+    p.add_argument("--arch", choices=("tiny", "large", "hplus", "7b"), default="hplus",
+                   help="hplus = ViT-H+ 0.84B (MR default); large = ViT-L 0.30B (FORA CT); 7b kept for reference")
+    p.add_argument("--steps", type=int, default=50_000)
+    p.add_argument("--batch-size", type=int, default=8)
     p.add_argument(
         "--grad-accum-steps",
         type=int,
-        default=4,
+        default=1,
         help="Fixed study microbatches per optimizer update on every rank",
     )
     p.add_argument("--workers", type=int, default=2)
@@ -81,18 +90,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target-shape", type=int, nargs=3, default=(256, 384, 384))
     p.add_argument("--posterior-shift-mm", type=float, default=15.0)
     p.add_argument("--seed", type=int, default=3407)
-    p.add_argument("--dino-prototypes", type=int, default=262_144)
-    p.add_argument("--ibot-prototypes", type=int, default=98_304)
-    p.add_argument("--dino-head-hidden-dim", type=int, default=8192)
-    p.add_argument("--ibot-head-hidden-dim", type=int, default=4096)
-    p.add_argument("--dino-bottleneck-dim", type=int, default=512)
-    p.add_argument("--ibot-bottleneck-dim", type=int, default=384)
-    p.add_argument("--lr", type=float, default=5e-5, help="Peak at global batch 1024 before sqrt scaling")
+    p.add_argument("--dino-prototypes", type=int, default=16_384)
+    p.add_argument("--ibot-prototypes", type=int, default=16_384)
+    p.add_argument("--dino-head-hidden-dim", type=int, default=2048)
+    p.add_argument("--ibot-head-hidden-dim", type=int, default=2048)
+    p.add_argument("--dino-bottleneck-dim", type=int, default=256)
+    p.add_argument("--ibot-bottleneck-dim", type=int, default=256)
+    p.add_argument("--lr", type=float, default=1e-3, help="Peak at global batch 1024 before sqrt scaling (DINOv2 ViT-L)")
     p.add_argument("--min-lr", type=float, default=1e-6)
-    p.add_argument("--warmup-steps", type=int, default=10_000)
+    p.add_argument("--warmup-steps", type=int, default=2_500)
     p.add_argument("--weight-decay", type=float, default=0.04)
-    p.add_argument("--weight-decay-end", type=float, default=0.04)
-    p.add_argument("--teacher-momentum", type=float, default=0.994)
+    p.add_argument("--weight-decay-end", type=float, default=0.4)
+    p.add_argument("--teacher-momentum", type=float, default=0.992)
     p.add_argument("--teacher-temperature", type=float, default=0.07)
     p.add_argument("--teacher-warmup-temperature", type=float, default=0.04)
     p.add_argument("--teacher-warmup-steps", type=int, default=10_000)
@@ -103,18 +112,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gram-weight", type=float, default=1.0)
     p.add_argument("--gram-max-tokens", type=int, default=1024)
     p.add_argument("--ibot-loss-chunk-size", type=int, default=1024)
-    p.add_argument("--cross-sequence-probability", type=float, default=0.75)
+    p.add_argument("--cross-sequence-probability", type=float, default=0.25)
     p.add_argument("--candidate-trials", type=int, default=12)
-    p.add_argument("--clip-grad", type=float, default=30.0)
-    p.add_argument("--save-every", type=int, default=250)
-    p.add_argument("--keep-checkpoints", type=int, default=3)
+    p.add_argument("--clip-grad", type=float, default=3.0)
+    p.add_argument("--save-every", type=int, default=500)
+    p.add_argument("--keep-checkpoints", type=int, default=6)
     p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--resume", default="latest", help="latest, none, or a DCP checkpoint directory")
-    p.add_argument("--activation-checkpointing", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--activation-checkpointing", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--selective-checkpointing", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
-    p.add_argument("--fp8", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--fp8", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--max-studies", type=int, default=None, help="Smoke only: cap studies per rank")
+    # FORA recipe fixes (see mr_dino/recipe.py)
+    p.add_argument("--global-overlap", type=float, default=0.25, help="Minimum per-axis overlap of the two global crops")
+    p.add_argument("--normalize-prototypes", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--position-bins", type=int, nargs=3, default=(2, 2, 2), help="Spatial Sinkhorn bins for patch targets; 1 1 1 disables")
+    p.add_argument("--cross-view-weight", type=float, default=1.0, help="Cross-crop twin-token patch objective (0 disables)")
+    p.add_argument("--cross-view-sequences", choices=("same", "any", "none"), default="same")
+    p.add_argument("--layerwise-decay", type=float, default=0.9)
+    p.add_argument("--patch-embed-lr-mult", type=float, default=0.2)
+    p.add_argument("--freeze-last-layer-steps", type=int, default=1250)
+    p.add_argument("--adamw-beta2", type=float, default=0.999)
     args = p.parse_args()
     # A running Slurm allocation can cleanly restart the worker step without
     # relinquishing its nodes.  Keep schedule changes in a small, auditable
@@ -245,6 +264,9 @@ def build_learner(args: argparse.Namespace, device: torch.device) -> DINO3DLearn
             ibot_loss_chunk_size=args.ibot_loss_chunk_size,
             with_gram_anchor=args.stage in {"gram", "highres"},
             initialize_weights=False,
+            normalize_prototypes=args.normalize_prototypes,
+            position_bins=None if tuple(args.position_bins) == (1, 1, 1) else tuple(args.position_bins),
+            cross_view_weight=args.cross_view_weight,
         )
     if args.activation_checkpointing:
         wrapper = _checkpoint_wrapper(args.selective_checkpointing)
@@ -272,15 +294,19 @@ def checkpoint_root(output: Path) -> Path:
 
 
 def resolve_checkpoint(output: Path, resume: str) -> Path | None:
+    """``latest``, ``none``, or an explicit checkpoint (normally the previous stage's last one).
+
+    Once this stage has written its own complete checkpoint, that one wins over an explicit
+    path: a requeued gram/highres job keeps RESUME=<previous stage> in its environment and
+    must continue, not restart from the previous stage.
+    """
     if not resume or resume.lower() == "none":
         return None
-    if resume != "latest":
-        return Path(resume)
     marker = checkpoint_root(output) / "latest.txt"
-    if not marker.exists():
-        return None
-    path = checkpoint_root(output) / marker.read_text().strip()
-    return path if (path / "COMPLETE").exists() else None
+    own = checkpoint_root(output) / marker.read_text().strip() if marker.exists() else None
+    if own is not None and (own / "COMPLETE").exists():
+        return own
+    return None if resume == "latest" else Path(resume)
 
 
 def runtime_state(sampler_offset: int) -> dict:
@@ -310,7 +336,7 @@ def save_checkpoint(
     os.replace(tmp, path / f"runtime_rank{rank:04d}.pt")
     if rank == 0:
         (path / "metadata.json").write_text(json.dumps({
-            "format": "mrrate_atlas_dinov3d_fsdp2_v1",
+            "format": CHECKPOINT_FORMAT,
             "step": step,
             "stage": args.stage,
             "sampler_offset_per_rank": sampler_offset,
@@ -346,10 +372,7 @@ def load_checkpoint(
     if not (path / "COMPLETE").exists():
         raise RuntimeError(f"Incomplete checkpoint: {path}")
     metadata = json.loads((path / "metadata.json").read_text())
-    if metadata.get("format") != "mrrate_atlas_dinov3d_fsdp2_v1":
-        raise RuntimeError(
-            f"Checkpoint format {metadata.get('format')!r} is not atlas-space MR DINO"
-        )
+    check_checkpoint_space(metadata.get("format"), metadata.get("args", {}), args.space, CHECKPOINT_FORMAT)
     saved_world = int(metadata.get("world_size", dist.get_world_size()))
     if saved_world != dist.get_world_size():
         raise RuntimeError(
@@ -359,15 +382,21 @@ def load_checkpoint(
     saved_fingerprint = metadata.get("args", {}).get("dataset_fingerprint")
     if saved_fingerprint and saved_fingerprint != args.dataset_fingerprint:
         raise RuntimeError(
-            "Atlas-space training cache/split changed since the checkpoint; "
+            "Training cache/split/space changed since the checkpoint; "
             "refusing an inexact sampler resume"
         )
     source_stage = metadata["stage"]
+    same_stage = source_stage == args.stage
+    # checkpoints written during freeze_last_layer have no optimizer state for the frozen prototype layers
+    frozen_missing = missing_frozen_optimizer_keys(path, learner, optimizer) if same_stage else []
+    if frozen_missing and rank == 0:
+        print(f"[resume] {len(frozen_missing)} optimizer-state keys of frozen last_layer params absent "
+              "(saved during freeze_last_layer); they start fresh", flush=True)
     loaded_step = int(dcp_load(
         path,
         model=learner,
         optimizer=optimizer,
-        strict_loading=(source_stage == args.stage),
+        strict_loading=same_stage and not frozen_missing,
     ))
     state = torch.load(path / f"runtime_rank{rank:04d}.pt", map_location="cpu", weights_only=False)
     sampler.set_offset(int(state["sampler_offset"]))
@@ -438,6 +467,7 @@ def main() -> int:
             target_spacing=tuple(args.target_spacing),
             target_shape=tuple(args.target_shape),
             posterior_shift_mm=args.posterior_shift_mm,
+            space=args.space,
         )
         dataset_kwargs = {
             "data_folder": args.data_folder,
@@ -451,7 +481,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRAtlasDINO3DDataset(
+    dataset = MRAlignedDINO3DDataset(
         **dataset_kwargs,
         splits_csv=args.splits_csv,
         split=args.split,
@@ -463,6 +493,7 @@ def main() -> int:
         cross_sequence_probability=args.cross_sequence_probability,
         candidate_trials=args.candidate_trials,
         seed=args.seed,
+        global_overlap=args.global_overlap,
     )
     local_instances = torch.tensor(len(dataset), device=device, dtype=torch.long)
     total_instances = local_instances.clone()
@@ -477,13 +508,14 @@ def main() -> int:
     )
 
     learner = build_learner(args, device)
-    trainable = list(learner.student.parameters())
-    optimizer = torch.optim.AdamW(
-        trainable,
+    optimizer = make_optimizer(
+        learner.student,
         lr=args.lr,
-        betas=(0.9, 0.99),
         weight_decay=args.weight_decay,
-        fused=True,
+        betas=(0.9, args.adamw_beta2),
+        layerwise_decay=args.layerwise_decay,
+        patch_embed_lr_mult=args.patch_embed_lr_mult,
+        n_blocks=len(learner.student.backbone.blocks),
     )
     start = load_checkpoint(resolve_checkpoint(output, args.resume), learner, optimizer, sampler, args, rank)
     transition_step = int(getattr(args, "warmup_transition_step", 0))
@@ -497,6 +529,7 @@ def main() -> int:
         collate_dino3d,
         patch_size=(2, 16, 16),
         mask_ratio=(args.mask_min, args.mask_max),
+        cross_view_sequences=args.cross_view_sequences if args.cross_view_weight > 0 else "none",
     )
     loader_generator = torch.Generator().manual_seed(args.seed + rank * 104729)
     loader = DataLoader(
@@ -566,7 +599,7 @@ def main() -> int:
             group["weight_decay"] = wd
 
         optimizer.zero_grad(set_to_none=True)
-        metric_accumulator = torch.zeros(5, device=device, dtype=torch.float32)
+        metric_accumulator = None
         for microstep in range(args.grad_accum_steps):
             batch = next(iterator)
             consumed_samples += args.batch_size
@@ -596,9 +629,11 @@ def main() -> int:
                     f"{backward_loss.detach()}; metrics={metric_debug}"
                 )
             backward_loss.backward()
-            metric_accumulator += torch.stack(
-                [metrics[k].float() for k in ("loss", "dino", "ibot", "koleo", "gram")]
-            )
+            metric_keys = sorted(metrics)
+            values_now = torch.stack([metrics[k].float() for k in metric_keys])
+            metric_accumulator = values_now if metric_accumulator is None else metric_accumulator + values_now
+        if step < args.freeze_last_layer_steps:
+            cancel_last_layer_gradients(learner.student)   # DINO/DINOv2 freeze_last_layer
         grad_norms = [
             torch.nn.utils.clip_grad_norm_(module.parameters(), args.clip_grad)
             for module in (learner.student.backbone, learner.student.dino_head, learner.student.ibot_head)
@@ -621,11 +656,7 @@ def main() -> int:
                         / int(total_instances)
                     ),
                     "grad_accum_steps": args.grad_accum_steps,
-                    "loss": float(values[0]),
-                    "dino": float(values[1]),
-                    "ibot": float(values[2]),
-                    "koleo": float(values[3]),
-                    "gram": float(values[4]),
+                    **{k: float(v) for k, v in zip(metric_keys, values)},
                     "lr": lr,
                     "weight_decay": wd,
                     "teacher_momentum": momentum,

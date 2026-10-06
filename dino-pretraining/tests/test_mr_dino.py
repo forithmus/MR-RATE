@@ -9,24 +9,24 @@ from mr_dino.data import (
     CACHE_MANIFEST_NAME,
     CropSpec,
     InfiniteStudySampler,
-    MRAtlasDINO3DDataset,
+    MRAlignedDINO3DDataset,
     _raw_volume,
     _contained_start,
     _intersection_box,
     collate_dino3d,
-    discover_raw_atlas,
+    discover_raw_aligned,
     previous_mr_data_module,
-    validate_atlas_cache,
+    validate_aligned_cache,
 )
 
 
-def make_dummy_cache(root, studies=4, shape=(8, 32, 32)):
-    space = root / "atlas_space"
+def make_dummy_cache(root, studies=4, shape=(8, 32, 32), space_name="coreg_space"):
+    space = root / space_name
     space.mkdir(parents=True)
     manifest = {
         "version": 1,
         "layout": "per_subject_stack",
-        "space": "atlas_space",
+        "space": space_name,
         "target_spacing": [1.0, 0.5, 0.5],
         "target_shape": list(shape),
         "posterior_shift_mm": 15.0,
@@ -49,7 +49,7 @@ def make_dummy_cache(root, studies=4, shape=(8, 32, 32)):
 
 
 def tiny_dataset(cache, seed=17):
-    return MRAtlasDINO3DDataset(
+    return MRAlignedDINO3DDataset(
         preprocessed_dir=str(cache),
         crop_spec=CropSpec(
             global_shape=(8, 32, 32),
@@ -62,40 +62,42 @@ def tiny_dataset(cache, seed=17):
     )
 
 
-def test_cache_contract_rejects_non_atlas(tmp_path):
+def test_cache_contract_rejects_other_space(tmp_path):
     cache = make_dummy_cache(tmp_path / "cache")
-    assert validate_atlas_cache(str(cache))["space"] == "atlas_space"
-    manifest_path = cache / "atlas_space" / CACHE_MANIFEST_NAME
+    assert validate_aligned_cache(str(cache))["space"] == "coreg_space"
+    with pytest.raises(FileNotFoundError):
+        validate_aligned_cache(str(cache), space="atlas_space")   # coreg cache, atlas requested
+    manifest_path = cache / "coreg_space" / CACHE_MANIFEST_NAME
     manifest = json.loads(manifest_path.read_text())
     manifest["space"] = "native_space"
     manifest_path.write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="expected 'atlas_space'"):
-        validate_atlas_cache(str(cache))
+    with pytest.raises(ValueError, match="expected 'coreg_space'"):
+        validate_aligned_cache(str(cache))
 
 
-def test_cache_contract_rejects_coreg_space_argument(tmp_path):
+def test_native_space_is_rejected(tmp_path):
     cache = make_dummy_cache(tmp_path / "cache")
-    with pytest.raises(ValueError, match="requires space='atlas_space'"):
-        validate_atlas_cache(str(cache), space="coreg_space")
+    with pytest.raises(ValueError, match="requires an aligned space"):
+        validate_aligned_cache(str(cache), space="native_space")
+    with pytest.raises(ValueError, match="requires an aligned space"):
+        discover_raw_aligned(str(tmp_path), space="native_space")
 
 
-def test_raw_discovery_selects_atlas_img_not_coreg_img(tmp_path):
-    atlas_dir = tmp_path / "batch00" / "study_atlas" / "atlas_img"
-    atlas_dir.mkdir(parents=True)
-    (atlas_dir / "t1.nii.gz").touch()
-    (atlas_dir / "flair.nii.gz").touch()
-    coreg_dir = tmp_path / "batch00" / "study_coreg" / "coreg_img"
-    coreg_dir.mkdir(parents=True)
-    (coreg_dir / "t1.nii.gz").touch()
-
-    samples = discover_raw_atlas(str(tmp_path), selected=None)
-    assert [sample["study_uid"] for sample in samples] == ["study_atlas"]
-    assert samples[0]["n_sequences"] == 2
+def test_raw_discovery_selects_requested_space_folder(tmp_path):
+    for name, sub, files in (("study_a", "atlas_img", 1), ("study_c", "coreg_img", 2), ("study_n", "img", 3)):
+        folder = tmp_path / "batch00" / name / sub
+        folder.mkdir(parents=True)
+        for i in range(files):
+            (folder / f"seq{i}.nii.gz").touch()
+    coreg = discover_raw_aligned(str(tmp_path), selected=None)   # default space is coreg
+    assert [(s["study_uid"], s["n_sequences"]) for s in coreg] == [("study_c", 2)]
+    atlas = discover_raw_aligned(str(tmp_path), selected=None, space="atlas_space")
+    assert [(s["study_uid"], s["n_sequences"]) for s in atlas] == [("study_a", 1)]
 
 
 def test_raw_transform_is_exact_previous_mil_transform(tmp_path):
     nib = pytest.importorskip("nibabel")
-    image_dir = tmp_path / "batch00" / "study" / "atlas_img"
+    image_dir = tmp_path / "batch00" / "study" / "coreg_img"
     image_dir.mkdir(parents=True)
     x, y, z = np.indices((12, 14, 6), dtype=np.float32)
     array = np.sin(x / 3) + np.cos(y / 4) + z / 7
@@ -124,10 +126,11 @@ def test_aligned_cross_sequence_views_and_determinism(tmp_path):
     assert torch.equal(first["teacher_global"], again["teacher_global"])
     assert first["teacher_global"].shape == (2, 1, 8, 32, 32)
     assert first["student_local"].shape == (2, 1, 4, 16, 16)
-    lo, hi = _intersection_box(first["global_starts"], (8, 32, 32))
-    for start in first["local_starts"]:
-        for s, n, left, right in zip(start, (4, 16, 16), lo, hi):
-            assert left <= s and s + n <= right
+    for start in first["local_starts"]:   # each local crop lies inside one of the two globals
+        assert any(
+            all(g <= s and s + n <= g + G for s, n, g, G in zip(start, (4, 16, 16), parent, (8, 32, 32)))
+            for parent in first["global_starts"]
+        )
 
 
 def test_collate_masks_match_patch_grid(tmp_path):

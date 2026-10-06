@@ -1,4 +1,4 @@
-"""Create a tiny raw MR-RATE-atlas NIfTI tree for integration tests."""
+"""Create a tiny raw MR-RATE coreg/atlas NIfTI tree for integration tests."""
 
 import argparse
 from pathlib import Path
@@ -13,13 +13,14 @@ def main() -> None:
     parser.add_argument("--studies", type=int, default=8)
     parser.add_argument("--sequences", type=int, default=3)
     parser.add_argument("--shape", type=int, nargs=3, default=(8, 32, 32))
+    parser.add_argument("--space", choices=("coreg_space", "atlas_space"), default="coreg_space")
     args = parser.parse_args()
 
     d, h, w = args.shape
     z, y, x = np.indices((d, h, w), dtype=np.float32)
     affine = np.diag([0.5, 0.5, 1.0, 1.0]).astype(np.float32)
     for study in range(args.studies):
-        image_dir = Path(args.out) / "batch00" / f"dummy_{study:03d}" / "atlas_img"
+        image_dir = Path(args.out) / "batch00" / f"dummy_{study:03d}" / {"coreg_space": "coreg_img", "atlas_space": "atlas_img"}[args.space]
         image_dir.mkdir(parents=True, exist_ok=True)
         for sequence in range(args.sequences):
             center = np.array((d, h, w), dtype=np.float32) / 2
@@ -37,7 +38,7 @@ def main() -> None:
                 nib.Nifti1Image(nifti_array, affine),
                 image_dir / f"sequence_{sequence:02d}.nii.gz",
             )
-    print(f"Wrote {args.studies} raw atlas studies under {args.out}")
+    print(f"Wrote {args.studies} raw {args.space} studies under {args.out}")
 
 
 if __name__ == "__main__":
