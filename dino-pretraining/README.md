@@ -176,7 +176,7 @@ sbatch scripts/train_32n_vitl.sbatch   # FORA recipe (ViT-L); 7B launcher kept a
 **Nodes and length.** The launcher defaults to 32 nodes; run it on 4 with `sbatch --nodes=4 …`.
 Nothing else changes: the global batch becomes 4×4×8 = 128 and the peak learning rate is
 sqrt-scaled from batch 1024 automatically.
-- **Phase 1 = 30,000 steps.** At batch 128 that is ~6 passes over the ~635k training
+- **Phase 1 = 50,000 steps.** At batch 128 that is ~10 passes over the ~635k training
   sequences.
 - **FORA reference:** the same ViT-L recipe on 4 nodes (also batch 128) reached its best
   validation MIL AUROC at ~23.5k steps.

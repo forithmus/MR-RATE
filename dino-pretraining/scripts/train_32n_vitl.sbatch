@@ -42,7 +42,7 @@ if [[ -n "$end_ts" ]]; then
 fi
 
 case "$STAGE" in
-  pretrain) STEPS=${STEPS:-30000}; GRAM_WEIGHT=0 ;;   # ~6 sequence-epochs at 4 nodes (batch 128); cosine ends here
+  pretrain) STEPS=${STEPS:-50000}; GRAM_WEIGHT=0 ;;   # ~10 sequence-epochs at 4 nodes (batch 128); cosine ends here
   gram) STEPS=${STEPS:-10000}; GRAM_WEIGHT=${GRAM_WEIGHT:-1.0} ;;
   highres) STEPS=${STEPS:-5000}; GRAM_WEIGHT=${GRAM_WEIGHT:-1.5} ;;
   *) echo "Unknown STAGE=$STAGE" >&2; exit 2 ;;
