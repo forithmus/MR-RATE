@@ -1,4 +1,4 @@
-"""FSDP2 training for the literal DINOv3 ViT-7B on atlas-registered MR-RATE."""
+"""FSDP2 3-D DINOv3 training (ViT-L default) on aligned (coreg/atlas) MR-RATE."""
 
 from __future__ import annotations
 
@@ -26,7 +26,9 @@ from dinov3.checkpointer import save_checkpoint as dcp_save
 from dinov3.layers.fp8_linear import convert_linears_to_fp8
 
 from .data import (
-    MRAtlasDINO3DDataset,
+    ALIGNED_SPACES,
+    DEFAULT_SPACE,
+    MRAlignedDINO3DDataset,
     InfiniteStudySampler,
     collate_dino3d,
     stage_crop_spec,
@@ -37,6 +39,7 @@ from .recipe import cancel_last_layer_gradients, make_optimizer, missing_frozen_
 from .train_ddp import (
     StopController,
     balanced_file_assignment,
+    check_checkpoint_space,
     build_backbone,
     cache_fingerprint,
     cosine,
@@ -47,20 +50,24 @@ from .train_ddp import (
 )
 
 
+CHECKPOINT_FORMAT = "mrrate_aligned_dinov3d_fsdp2_v1"
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--data-folder",
-        help="MR-RATE-atlas NIfTI tree; uses the same live loader as previous MIL training",
+        help="MR-RATE-coreg (or -atlas) NIfTI tree; uses the same live loader as previous MIL training",
     )
     source.add_argument(
         "--preprocessed-dir",
-        help="Optional MR-RATE volume cache root containing atlas_space/*.npz",
+        help="Optional MR-RATE volume cache root containing <space>/*.npz",
     )
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
-    p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
+    p.add_argument("--space", default=DEFAULT_SPACE, choices=ALIGNED_SPACES,
+                   help="coreg_space (default): sequences on the center T1's native grid; atlas_space: MNI 1 mm box")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
     p.add_argument("--arch", choices=("tiny", "large", "hplus", "7b"), default="large",
@@ -325,7 +332,7 @@ def save_checkpoint(
     os.replace(tmp, path / f"runtime_rank{rank:04d}.pt")
     if rank == 0:
         (path / "metadata.json").write_text(json.dumps({
-            "format": "mrrate_atlas_dinov3d_fsdp2_v1",
+            "format": CHECKPOINT_FORMAT,
             "step": step,
             "stage": args.stage,
             "sampler_offset_per_rank": sampler_offset,
@@ -361,10 +368,7 @@ def load_checkpoint(
     if not (path / "COMPLETE").exists():
         raise RuntimeError(f"Incomplete checkpoint: {path}")
     metadata = json.loads((path / "metadata.json").read_text())
-    if metadata.get("format") != "mrrate_atlas_dinov3d_fsdp2_v1":
-        raise RuntimeError(
-            f"Checkpoint format {metadata.get('format')!r} is not atlas-space MR DINO"
-        )
+    check_checkpoint_space(metadata.get("format"), metadata.get("args", {}), args.space, CHECKPOINT_FORMAT)
     saved_world = int(metadata.get("world_size", dist.get_world_size()))
     if saved_world != dist.get_world_size():
         raise RuntimeError(
@@ -374,7 +378,7 @@ def load_checkpoint(
     saved_fingerprint = metadata.get("args", {}).get("dataset_fingerprint")
     if saved_fingerprint and saved_fingerprint != args.dataset_fingerprint:
         raise RuntimeError(
-            "Atlas-space training cache/split changed since the checkpoint; "
+            "Training cache/split/space changed since the checkpoint; "
             "refusing an inexact sampler resume"
         )
     source_stage = metadata["stage"]
@@ -459,6 +463,7 @@ def main() -> int:
             target_spacing=tuple(args.target_spacing),
             target_shape=tuple(args.target_shape),
             posterior_shift_mm=args.posterior_shift_mm,
+            space=args.space,
         )
         dataset_kwargs = {
             "data_folder": args.data_folder,
@@ -472,7 +477,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRAtlasDINO3DDataset(
+    dataset = MRAlignedDINO3DDataset(
         **dataset_kwargs,
         splits_csv=args.splits_csv,
         split=args.split,

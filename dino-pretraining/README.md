@@ -1,22 +1,38 @@
-# Atlas-space 3-D DINOv3 for MR-RATE
+# Co-registered 3-D DINOv3 for MR-RATE
 
 This module adapts FORA's CT DINOv3 training strategy to MR-RATE's
-**atlas-registered multi-sequence MRI**. It is self-supervised: reports and
-pathology labels are not used.
+**co-registered multi-sequence MRI** (`coreg_space`, default; `atlas_space` remains
+selectable). It is self-supervised: reports and pathology labels are not used for
+training; they are used only by the validation probe (below) to score checkpoints.
 
 ## Data and view contract
 
-Production training reads the existing MR-RATE-atlas NIfTI tree directly:
+Production training reads an extracted MR-RATE-coreg NIfTI tree directly:
 
 ```text
-<data_folder>/batchXX/<study_uid>/atlas_img/*.nii.gz
+<data_folder>/batchXX/<study_uid>/coreg_img/*.nii.gz     # --space coreg_space (default)
+<data_folder>/batchXX/<study_uid>/atlas_img/*.nii.gz     # --space atlas_space
 ```
+
+**Why coreg, not atlas.** Both spaces use the same rigid (ANTs, Mattes MI) registration, so
+both are voxel-aligned across sequences, which the cross-sequence views need. They differ
+in the target grid:
+- **Coreg** keeps every sequence on the study's T1w center scan's native grid (e.g.
+  0.47×0.47×1.2 mm, 190×240×240 mm field of view).
+- **Atlas** resamples into the 1 mm MNI box (193×229×193 mm).
+
+The model input is 1.0×0.5×0.5 mm, so from atlas the 0.5 mm in-plane detail is
+interpolation, and the MNI box crops the skull base and neck (−12% head volume on a
+checked study), which matters for the spinal labels. `native_space` is rejected
+(its sequences are not aligned).
 
 It imports the canonical discovery and per-volume preprocessing functions from
 `contrastive-pretraining/scripts/data.py`, the loader used by previous MR-RATE
 MIL training. Therefore atlas selection, canonical RAS orientation, physical
 resampling, z-score normalization, posterior shift, and crop/padding are exactly
-shared rather than reimplemented. `--space atlas_space` maps to `atlas_img`.
+shared rather than reimplemented. `--space coreg_space` maps to `coreg_img`,
+`--space atlas_space` to `atlas_img`. Checkpoints record their space, and resume refuses
+to cross spaces (checkpoints written before the coreg switch are atlas-space).
 
 An optional preprocessed volume cache remains available with
 `--preprocessed-dir`. This is separate from cached MIL: cached MIL stores the
@@ -99,9 +115,9 @@ From `contrastive-pretraining/`:
 
 ```bash
 python scripts/preprocess_volumes.py \
-  --data_folder /path/to/MR-RATE-atlas/mri \
+  --data_folder /path/to/MR-RATE-coreg/mri \
   --out_dir /path/to/mrrate_preprocessed \
-  --space atlas_space \
+  --space coreg_space \
   --normalizer zscore \
   --num_workers 8
 ```
@@ -146,11 +162,12 @@ The job succeeds only after `step_00000002/COMPLETE` exists.
 
 ## Production training
 
-The production launcher uses the existing MR-RATE-atlas dataset directly:
+The production launcher reads the extracted MR-RATE-coreg tree directly (`SPACE=atlas_space`
+switches back to the atlas tree):
 
 ```bash
 cd dino-pretraining
-DATA_FOLDER=/path/to/MR-RATE-atlas/mri \
+DATA_FOLDER=/path/to/MR-RATE-coreg/mri \
 SPLITS_CSV=/path/to/splits.csv \
 OUTPUT=/path/to/mrdino3d_7b/pretrain \
 sbatch scripts/train_32n_vitl.sbatch   # FORA recipe (ViT-L); 7B launcher kept as legacy
@@ -161,14 +178,20 @@ Important overrides are `STEPS`, `BATCH_SIZE`, `GRAD_ACCUM_STEPS`, `WORKERS`,
 and `COMPILE`. The default warmup is 2,500 optimizer steps (FORA recipe). `RESUME=latest`
 loads the latest checkpoint only when its `COMPLETE` marker exists.
 
-For later stages:
+Phases 2 and 3 resume from the previous stage's checkpoint (the schedule restarts;
+the Gram anchor is set to the incoming teacher):
 
 ```bash
-STAGE=gram RESUME=/path/to/pretrain/checkpoints/step_00100000 \
-DATA_FOLDER=/path/to/MR-RATE-atlas/mri \
-OUTPUT=/path/to/mrdino3d_7b/gram \
-sbatch scripts/train_32n_7b.sbatch
+STAGE=gram RESUME=/path/to/pretrain/checkpoints/step_00020000 \
+DATA_FOLDER=/path/to/MR-RATE-coreg/mri OUTPUT=/path/to/mrdino3d_vitl/gram \
+sbatch scripts/train_32n_vitl.sbatch          # 10,000 steps, Gram weight 1.0
+STAGE=highres RESUME=/path/to/gram/checkpoints/step_00010000 \
+DATA_FOLDER=/path/to/MR-RATE-coreg/mri OUTPUT=/path/to/mrdino3d_vitl/highres \
+sbatch scripts/train_32n_vitl.sbatch          # 5,000 steps, Gram 1.5, 64x384x384 globals
 ```
+
+Probe the phase-2 end against the phase-1 end first. If Gram lost AUROC, start
+phase 3 from the phase-1 checkpoint instead (FORA CT did this; there Gram gave no gain).
 
 The launcher catches the Slurm wall-time signal, writes a complete distributed
 checkpoint with per-rank sampler and RNG state, and requeues the same job. Do
@@ -188,13 +211,55 @@ mail notifications, 24-hour requeue policy, deadline checkpointing, node-local
 compiler caches, InfiniBand/NCCL settings, and optional split filtering. The
 7B path is the production target; H+ is a smaller DDP fallback.
 
+## Validation probe (checkpoint scoring)
+
+This is the FORA CT-DINO protocol: frozen features, MIL on the validation split only, and
+patient-level cross-validation. Train and test are never touched.
+
+1. **Export** (`python -m mr_dino.probe export`): copies the EMA-teacher backbone out of a
+   DCP checkpoint, so checkpoint rotation cannot delete it.
+2. **Extract** (`python -m mr_dino.probe extract`, one worker per GPU):
+   - Runs every sequence of every labelled `val` study (3,764 studies, 3,413 patients)
+     through the training preprocessing of the checkpoint's own space/spacing/shape.
+   - Cuts each volume into phase-1-size tiles (64×192×192 voxels) and keeps the last
+     block's normalised patch tokens.
+   - Average-pools the tokens 2×2×2 over head foreground and drops air.
+   - Writes one fp16 token file plus one index per worker to node-local `/tmp`.
+3. **CV** (`python -m mr_dino.probe cv --fold k`): trains MR-RATE's NeuroVFM
+   `ClassifyThenAggregate` head per patient-level fold (5 folds, 8 epochs, batch 8,
+   lr 2e-3, pos_weight clipped to [1, 100]). One bag holds all sequences of a study.
+4. **Summarize**: out-of-fold macro and per-class AUROC/AUPRC → `results.json`,
+   `per_class.csv`, `summary.txt`.
+
+Labels default to the 14 merged neuroradiology groups
+(`contrastive-pretraining/scripts/eval_labels/splits_merged_majority`). Set
+`LABELS_CSV`/`SPLITS_CSV` to use the 32/37-pathology labels instead.
+
+```bash
+# one checkpoint, one node (extract -> 5 folds -> summary; ~1-2 h on 4 H200):
+DATA_FOLDER=/path/to/MR-RATE-coreg/mri \
+sbatch scripts/probe_checkpoint.sbatch /path/to/pretrain/checkpoints/step_00005000 /path/to/pretrain/probe/step_5000
+# follow a running stage: export each listed step as it appears, then submit its probe:
+DATA_FOLDER=/path/to/MR-RATE-coreg/mri nohup scripts/probe_watch.sh /path/to/pretrain 2500 5000 10000 15000 20000 &
+# inside a running training allocation instead of a new job:
+srun --overlap --jobid JOB -N1 -n1 -w NODE scripts/probe_node.sh CKPT OUT_DIR
+```
+
+Use the probe to:
+- decide how long to run phase 1;
+- check that phase 2 (Gram) does not lose AUROC before phase 3 starts from it;
+- settle open recipe questions, e.g. `--cross-sequence-probability` 0 vs 0.25.
+
+Compare per-class rows, not just the macro AUROC: FLAIR-, SWI- and DWI-dependent groups
+are what cross-sequence choices can hurt.
+
 ## Lightweight/debug run
 
 `mr_dino.train_ddp` supports one or more GPUs and a tiny backbone:
 
 ```bash
 torchrun --standalone --nproc-per-node=1 -m mr_dino.train_ddp \
-  --data-folder /path/to/MR-RATE-atlas/mri \
+  --data-folder /path/to/MR-RATE-coreg/mri \
   --output-dir /tmp/mrdino_debug \
   --arch tiny --steps 10 --workers 0 --local-crops 2 \
   --prototypes 64 --head-hidden-dim 128 \

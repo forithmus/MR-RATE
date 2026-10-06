@@ -1,6 +1,10 @@
-"""Atlas-registered multi-sequence MR sampling for volumetric DINOv3.
+"""Aligned multi-sequence MR sampling for volumetric DINOv3.
 
-The default path discovers and preprocesses atlas NIfTIs with the canonical
+Training uses MR-RATE's co-registered space by default (``coreg_space``: every
+sequence rigidly registered to the study's T1w center scan and kept on that
+scan's native grid, so no MNI field-of-view crop and no 1 mm resampling);
+``atlas_space`` remains selectable.  Both are voxel-aligned across sequences.
+The default path discovers and preprocesses NIfTIs with the canonical
 loader used by the previous MR-RATE training code.  The optional NPZ path reads
 the volume cache produced by that loader's ``preprocess_volumes.py`` helper.
 Global and local DINO views share a physical region, but may use different
@@ -29,6 +33,8 @@ from .recipe import overlap_pairs, snap_second_start, token_offset
 
 
 CACHE_MANIFEST_NAME = "_manifest.json"
+ALIGNED_SPACES = ("coreg_space", "atlas_space")
+DEFAULT_SPACE = "coreg_space"
 EXPECTED_CACHE_LAYOUT = "per_subject_stack"
 _PREVIOUS_DATA_MODULE = None
 
@@ -211,21 +217,30 @@ def _cache_space_dir(preprocessed_dir: str, space: str) -> Path:
     return nested if nested.is_dir() else root
 
 
-def validate_atlas_cache(
+def check_aligned_space(space: str) -> str:
+    """Cross-sequence views need voxel alignment: native_space is never accepted."""
+    if space not in ALIGNED_SPACES:
+        raise ValueError(
+            f"MR DINO requires an aligned space {ALIGNED_SPACES}; got {space!r} "
+            "(native_space sequences are not voxel-aligned)"
+        )
+    return space
+
+
+def validate_aligned_cache(
     preprocessed_dir: str,
-    space: str = "atlas_space",
+    space: str = DEFAULT_SPACE,
     expected_spacing: tuple[float, float, float] = (1.0, 0.5, 0.5),
 ) -> dict:
-    """Fail early unless this is a compatible MR-RATE atlas-space cache."""
-    if space != "atlas_space":
-        raise ValueError("MR DINO requires space='atlas_space'; native/coreg inputs are not accepted")
+    """Fail early unless this is a compatible MR-RATE aligned-space cache."""
+    check_aligned_space(space)
     space_dir = _cache_space_dir(preprocessed_dir, space)
     manifest_path = space_dir / CACHE_MANIFEST_NAME
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Missing MR-RATE preprocessing manifest: {manifest_path}")
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("space") != "atlas_space":
-        raise ValueError(f"Cache is {manifest.get('space')!r}, expected 'atlas_space'")
+    if manifest.get("space") != space:
+        raise ValueError(f"Cache is {manifest.get('space')!r}, expected {space!r}")
     if manifest.get("layout") != EXPECTED_CACHE_LAYOUT:
         raise ValueError(
             f"Unsupported cache layout {manifest.get('layout')!r}; expected {EXPECTED_CACHE_LAYOUT!r}"
@@ -236,13 +251,13 @@ def validate_atlas_cache(
     return manifest
 
 
-def discover_atlas_cache(
+def discover_aligned_cache(
     preprocessed_dir: str,
     splits_csv: str | None = None,
     split: str = "train",
-    space: str = "atlas_space",
+    space: str = DEFAULT_SPACE,
 ) -> list[dict]:
-    manifest = validate_atlas_cache(preprocessed_dir, space)
+    manifest = validate_aligned_cache(preprocessed_dir, space)
     space_dir = _cache_space_dir(preprocessed_dir, space)
     selected = _load_split_ids(splits_csv, split)
     samples = []
@@ -258,7 +273,7 @@ def discover_atlas_cache(
             "volume_shape": shape[1:],
         })
     if not samples:
-        raise RuntimeError(f"No {split!r} atlas-registered studies found under {space_dir}")
+        raise RuntimeError(f"No {split!r} {space} studies found under {space_dir}")
     return samples
 
 
@@ -308,14 +323,16 @@ def previous_mr_data_module():
     return module
 
 
-def discover_raw_atlas(
+def discover_raw_aligned(
     data_folder: str,
     selected: set[str] | None = None,
+    space: str = DEFAULT_SPACE,
 ) -> list[dict]:
-    """Discover atlas NIfTIs through the previous training dataloader."""
+    """Discover aligned NIfTIs (coreg_img/ or atlas_img/) through the previous training dataloader."""
+    check_aligned_space(space)
     samples = []
     previous = previous_mr_data_module()
-    for subject in previous.discover_subjects(data_folder, "atlas_space"):
+    for subject in previous.discover_subjects(data_folder, space):
         study_uid = str(subject["subject_id"])
         if selected is not None and study_uid not in selected:
             continue
@@ -326,17 +343,18 @@ def discover_raw_atlas(
             "n_sequences": len(paths),
         })
     if not samples:
-        raise RuntimeError(f"No atlas-registered NIfTIs found under {data_folder}")
+        raise RuntimeError(f"No {space} NIfTIs found under {data_folder}")
     return samples
 
 
-def discover_raw_atlas_split(
+def discover_raw_aligned_split(
     data_folder: str,
     splits_csv: str | None = None,
     split: str = "train",
+    space: str = DEFAULT_SPACE,
 ) -> list[dict]:
-    """Discover a split using the previous loader's atlas-space convention."""
-    return discover_raw_atlas(data_folder, _load_split_ids(splits_csv, split))
+    """Discover a split using the previous loader's space convention."""
+    return discover_raw_aligned(data_folder, _load_split_ids(splits_csv, split), space)
 
 
 def _raw_volume(
@@ -358,8 +376,8 @@ def _raw_volume(
     return torch.from_numpy(np.ascontiguousarray(array)).to(torch.bfloat16)
 
 
-class MRAtlasDINO3DDataset(Dataset):
-    """Study-level SSL samples from atlas-aligned, variable-count MR sequences."""
+class MRAlignedDINO3DDataset(Dataset):
+    """Study-level SSL samples from voxel-aligned, variable-count MR sequences."""
 
     def __init__(
         self,
@@ -368,7 +386,7 @@ class MRAtlasDINO3DDataset(Dataset):
         data_folder: str | None = None,
         splits_csv: str | None = None,
         split: str = "train",
-        space: str = "atlas_space",
+        space: str = DEFAULT_SPACE,
         crop_spec: CropSpec = CropSpec(),
         target_spacing: tuple[float, float, float] = (1.0, 0.5, 0.5),
         target_shape: tuple[int, int, int] = (256, 384, 384),
@@ -383,8 +401,7 @@ class MRAtlasDINO3DDataset(Dataset):
     ) -> None:
         if (preprocessed_dir is None) == (data_folder is None):
             raise ValueError("Pass exactly one of preprocessed_dir or data_folder")
-        if space != "atlas_space":
-            raise ValueError("Only atlas_space is valid for atlas-registered MR DINO")
+        self.space = check_aligned_space(space)
         if not 0 <= cross_sequence_probability <= 1:
             raise ValueError("cross_sequence_probability must be in [0, 1]")
         if not 0 <= global_overlap <= 1:
@@ -406,10 +423,10 @@ class MRAtlasDINO3DDataset(Dataset):
         self._cached_names: list[str] | None = None
         self.preprocessed = preprocessed_dir is not None
         if self.preprocessed:
-            manifest = validate_atlas_cache(preprocessed_dir, space, target_spacing)
+            manifest = validate_aligned_cache(preprocessed_dir, space, target_spacing)
             self.target_shape = tuple(int(x) for x in manifest["target_shape"])
             if cache_files is None:
-                self.samples = discover_atlas_cache(preprocessed_dir, splits_csv, split, space)
+                self.samples = discover_aligned_cache(preprocessed_dir, splits_csv, split, space)
             else:
                 selected = _load_split_ids(splits_csv, split)
                 self.samples = [
@@ -423,18 +440,18 @@ class MRAtlasDINO3DDataset(Dataset):
                     if selected is None or Path(path).stem in selected
                 ]
                 if not self.samples:
-                    raise RuntimeError("This rank received no atlas-registered cache studies")
+                    raise RuntimeError(f"This rank received no {space} cache studies")
         else:
             selected = _load_split_ids(splits_csv, split)
             if raw_samples is None:
-                self.samples = discover_raw_atlas(data_folder, selected)
+                self.samples = discover_raw_aligned(data_folder, selected, space)
             else:
                 self.samples = [
                     sample for sample in raw_samples
                     if selected is None or sample["study_uid"] in selected
                 ]
                 if not self.samples:
-                    raise RuntimeError("This rank received no atlas-registered NIfTI studies")
+                    raise RuntimeError(f"This rank received no {space} NIfTI studies")
         for sample in self.samples:
             if "volume_shape" in sample and tuple(sample["volume_shape"]) != self.target_shape:
                 raise ValueError(

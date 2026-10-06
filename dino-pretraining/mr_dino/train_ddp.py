@@ -1,4 +1,4 @@
-"""Distributed, resumable 3-D DINOv3 training for atlas-registered MR-RATE."""
+"""Distributed, resumable 3-D DINOv3 training for aligned (coreg/atlas) MR-RATE."""
 
 from __future__ import annotations
 
@@ -23,11 +23,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
 from .data import (
-    MRAtlasDINO3DDataset,
+    ALIGNED_SPACES,
+    DEFAULT_SPACE,
+    MRAlignedDINO3DDataset,
     InfiniteStudySampler,
     collate_dino3d,
-    discover_atlas_cache,
-    discover_raw_atlas_split,
+    discover_aligned_cache,
+    discover_raw_aligned_split,
     npz_volume_shape,
     stage_crop_spec,
 )
@@ -36,17 +38,37 @@ from .recipe import cancel_last_layer_gradients, make_optimizer
 from .objective import DINO3DLearner, LossWeights
 
 
+CHECKPOINT_FORMAT = "mrrate_aligned_dinov3d_full_v1"
+# Checkpoints written before the coreg switch: same contents, always atlas space.
+_LEGACY_ATLAS_FORMATS = {
+    "mrrate_aligned_dinov3d_full_v1": "mrrate_atlas_dinov3d_full_v1",
+    "mrrate_aligned_dinov3d_fsdp2_v1": "mrrate_atlas_dinov3d_fsdp2_v1",
+}
+
+
+def check_checkpoint_space(fmt: str | None, saved_args: dict, space: str, expected: str) -> None:
+    """Refuse to resume across MR spaces."""
+    if fmt == expected:
+        saved_space = saved_args.get("space")
+    elif fmt == _LEGACY_ATLAS_FORMATS.get(expected):
+        saved_space = "atlas_space"
+    else:
+        raise RuntimeError(f"Checkpoint format {fmt!r} is not an MR DINO checkpoint ({expected})")
+    if saved_space != space:
+        raise RuntimeError(f"Checkpoint was trained on {saved_space!r}; this run uses {space!r}")
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("--preprocessed-dir", help="MR-RATE cache root containing atlas_space/*.npz")
+    source.add_argument("--preprocessed-dir", help="MR-RATE cache root containing <space>/*.npz")
     source.add_argument(
         "--data-folder",
-        help="MR-RATE-atlas NIfTI tree; uses the same live loader as previous MIL training",
+        help="MR-RATE-coreg (or -atlas) NIfTI tree; uses the same live loader as previous MIL training",
     )
     p.add_argument("--splits-csv")
     p.add_argument("--split", default="train")
-    p.add_argument("--space", default="atlas_space", choices=("atlas_space",))
+    p.add_argument("--space", default=DEFAULT_SPACE, choices=ALIGNED_SPACES)
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
     p.add_argument("--arch", choices=("tiny", "large", "hplus"), default="large")
@@ -119,9 +141,9 @@ def read_train_files(
     preprocessed_dir: str,
     splits_csv: str | None,
     split: str,
-    space: str = "atlas_space",
+    space: str = DEFAULT_SPACE,
 ) -> list[str]:
-    return [sample["cache_path"] for sample in discover_atlas_cache(
+    return [sample["cache_path"] for sample in discover_aligned_cache(
         preprocessed_dir, splits_csv=splits_csv, split=split, space=space
     )]
 
@@ -148,6 +170,7 @@ def raw_fingerprint(
     target_spacing: tuple[float, float, float] = (1.0, 0.5, 0.5),
     target_shape: tuple[int, int, int] = (256, 384, 384),
     posterior_shift_mm: float = 15.0,
+    space: str = DEFAULT_SPACE,
 ) -> str:
     """Fingerprint raw studies without tying exact resume to an absolute mount path."""
     records = []
@@ -163,7 +186,7 @@ def raw_fingerprint(
             "world": world,
             "max_studies_per_rank": max_studies_per_rank,
             "preprocessing": {
-                "space": "atlas_space",
+                "space": space,
                 "normalizer": "zscore",
                 "target_spacing": list(target_spacing),
                 "target_shape": list(target_shape),
@@ -228,16 +251,17 @@ def distributed_raw_assignment(
     target_spacing: tuple[float, float, float],
     target_shape: tuple[int, int, int],
     posterior_shift_mm: float,
+    space: str = DEFAULT_SPACE,
 ) -> tuple[list[dict], str]:
     """Discover once on rank 0 and publish one small assignment file per rank."""
     assignment_dir = output / "dataset_assignments"
     metadata_path = assignment_dir / "metadata.json"
     if rank == 0:
-        samples = discover_raw_atlas_split(
-            data_folder, splits_csv=splits_csv, split=split
+        samples = discover_raw_aligned_split(
+            data_folder, splits_csv=splits_csv, split=split, space=space
         )
         if len(samples) < world:
-            raise RuntimeError(f"{len(samples)} atlas studies cannot supply {world} ranks")
+            raise RuntimeError(f"{len(samples)} {space} studies cannot supply {world} ranks")
         fingerprint = raw_fingerprint(
             samples,
             world,
@@ -245,12 +269,13 @@ def distributed_raw_assignment(
             target_spacing,
             target_shape,
             posterior_shift_mm,
+            space,
         )
         assignments = balanced_sample_assignment(samples, world)
         if max_studies_per_rank:
             assignments = [items[:max_studies_per_rank] for items in assignments]
         if any(not items for items in assignments):
-            raise RuntimeError("Raw atlas assignment left at least one distributed rank empty")
+            raise RuntimeError("Raw assignment left at least one distributed rank empty")
         assignment_dir.mkdir(parents=True, exist_ok=True)
         for assigned_rank, items in enumerate(assignments):
             destination = assignment_dir / f"rank_{assigned_rank:04d}.json"
@@ -258,7 +283,8 @@ def distributed_raw_assignment(
             temporary.write_text(json.dumps(items, separators=(",", ":")))
             os.replace(temporary, destination)
         metadata = {
-            "format": "mrrate_atlas_raw_assignment_v1",
+            "format": "mrrate_aligned_raw_assignment_v1",
+            "space": space,
             "world_size": world,
             "dataset_fingerprint": fingerprint,
             "split": split,
@@ -269,13 +295,13 @@ def distributed_raw_assignment(
     if dist.is_initialized():
         dist.barrier()
     metadata = json.loads(metadata_path.read_text())
-    if metadata.get("format") != "mrrate_atlas_raw_assignment_v1":
-        raise RuntimeError(f"Invalid raw atlas assignment metadata: {metadata_path}")
+    if metadata.get("format") != "mrrate_aligned_raw_assignment_v1" or metadata.get("space") != space:
+        raise RuntimeError(f"Invalid or other-space raw assignment metadata: {metadata_path}")
     if int(metadata.get("world_size", -1)) != world:
-        raise RuntimeError("Raw atlas assignment world size changed during startup")
+        raise RuntimeError("Raw assignment world size changed during startup")
     assigned = json.loads((assignment_dir / f"rank_{rank:04d}.json").read_text())
     if not assigned:
-        raise RuntimeError(f"Rank {rank} received no raw atlas studies")
+        raise RuntimeError(f"Rank {rank} received no raw {space} studies")
     return assigned, str(metadata["dataset_fingerprint"])
 
 
@@ -370,7 +396,7 @@ def save_checkpoint(
         rng_by_rank = [local_rng]
     if rank == 0:
         state = {
-            "format": "mrrate_atlas_dinov3d_full_v1",
+            "format": CHECKPOINT_FORMAT,
             "step": step,
             "stage": args.stage,
             "world_size": dist.get_world_size() if dist.is_initialized() else 1,
@@ -407,16 +433,14 @@ def load_checkpoint(
     current_stage: str,
     dataset_fingerprint: str | None,
     world: int,
+    current_space: str = DEFAULT_SPACE,
 ) -> int:
     if not path.exists():
         if rank == 0:
             print(f"[resume] {path} not found; starting from scratch", flush=True)
         return 0
     state = torch.load(path, map_location="cpu", weights_only=False)
-    if state.get("format") != "mrrate_atlas_dinov3d_full_v1":
-        raise RuntimeError(
-            f"Checkpoint format {state.get('format')!r} is not atlas-space MR DINO"
-        )
+    check_checkpoint_space(state.get("format"), state.get("args", {}), current_space, CHECKPOINT_FORMAT)
     if int(state.get("world_size", world)) != world:
         raise RuntimeError("Exact DDP resume requires the checkpoint's original world size")
     saved_fingerprint = state.get("args", {}).get("dataset_fingerprint")
@@ -517,6 +541,7 @@ def main() -> int:
             target_spacing=tuple(args.target_spacing),
             target_shape=tuple(args.target_shape),
             posterior_shift_mm=args.posterior_shift_mm,
+            space=args.space,
         )
         dataset_kwargs = {
             "data_folder": args.data_folder,
@@ -531,7 +556,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRAtlasDINO3DDataset(
+    dataset = MRAlignedDINO3DDataset(
         **dataset_kwargs,
         splits_csv=args.splits_csv,
         split=args.split,
@@ -618,7 +643,7 @@ def main() -> int:
 
     start = load_checkpoint(
         checkpoint_path(output, args.resume), learner, optimizer, sampler, device, rank,
-        args.stage, args.dataset_fingerprint, world,
+        args.stage, args.dataset_fingerprint, world, args.space,
     ) if checkpoint_path(output, args.resume) else 0
     consumed_samples = sampler.offset
     # Cross-stage resume fixes the new Gram target to the incoming EMA teacher.

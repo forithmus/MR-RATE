@@ -27,7 +27,7 @@ if [[ -z "${CODE:-}" ]]; then
   fi
 fi
 SCRIPT_DIR="$CODE/scripts"
-: "${DATA_FOLDER:?Set DATA_FOLDER to the MR-RATE-atlas NIfTI root}"
+: "${DATA_FOLDER:?Set DATA_FOLDER to the extracted MR-RATE-coreg NIfTI root (batchXX/<study>/coreg_img)}"
 STAGE=${STAGE:-pretrain}
 OUTPUT=${OUTPUT:-"$PWD/mrdino3d_vitl/$STAGE"}
 mkdir -p "$OUTPUT"
@@ -58,7 +58,7 @@ echo "MR DINOv3 ViT-L (FORA recipe): stage=$STAGE nodes=$SLURM_NNODES output=$OU
 srun --nodes="$SLURM_NNODES" --ntasks="$SLURM_NNODES" --ntasks-per-node=1 \
   --kill-on-bad-exit=1 "$SCRIPT_DIR/train_node.sh" \
   --data-folder "$DATA_FOLDER" \
-  --space atlas_space \
+  --space "${SPACE:-coreg_space}" \
   "${SPLIT_ARGS[@]}" \
   --output-dir "$OUTPUT" --stage "$STAGE" --arch large --steps "$STEPS" \
   --batch-size "${BATCH_SIZE:-8}" --grad-accum-steps "${GRAD_ACCUM_STEPS:-1}" \

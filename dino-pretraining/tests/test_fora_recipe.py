@@ -4,7 +4,7 @@ import math
 import pytest
 import torch
 
-from mr_dino.data import CropSpec, MRAtlasDINO3DDataset, collate_dino3d
+from mr_dino.data import CropSpec, MRAlignedDINO3DDataset, collate_dino3d
 from mr_dino.recipe import (
     CosineLinear,
     GroupedAdamW,
@@ -24,7 +24,7 @@ GLOBAL = (8, 32, 32)
 
 
 def big_dataset(cache, cross_sequence_probability=0.0, seed=5):
-    return MRAtlasDINO3DDataset(
+    return MRAlignedDINO3DDataset(
         preprocessed_dir=str(cache),
         crop_spec=CropSpec(global_shape=GLOBAL, local_shape=(4, 16, 16), local_crops=3),
         cross_sequence_probability=cross_sequence_probability,
