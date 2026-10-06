@@ -59,6 +59,19 @@ test -f "$OUTPUT/checkpoints/step_00000002/COMPLETE"
 grep -q '"step": 2' "$OUTPUT/metrics.jsonl"
 echo "Synthetic raw-coreg MR DINO FSDP2 integration and resume passed: $OUTPUT"
 
+# Stage transitions with the phase-2/3 launcher settings (fixed teacher temperature, no freeze).
+STAGE_FIXED=(--teacher-temperature 0.07 --teacher-warmup-temperature 0.07 --teacher-warmup-steps 1
+             --teacher-momentum 0.996 --freeze-last-layer-steps 0 --warmup-steps 1)
+srun --nodes=1 --ntasks=1 --kill-on-bad-exit=1 "$SCRIPT_DIR/train_node.sh" "${COMMON_ARGS[@]}" \
+  --output-dir "$OUTPUT/gram" --stage gram --gram-weight 1.0 --steps 2 \
+  --resume "$OUTPUT/checkpoints/step_00000002" "${STAGE_FIXED[@]}"
+test -f "$OUTPUT/gram/checkpoints/step_00000002/COMPLETE"
+srun --nodes=1 --ntasks=1 --kill-on-bad-exit=1 "$SCRIPT_DIR/train_node.sh" "${COMMON_ARGS[@]}" \
+  --output-dir "$OUTPUT/highres" --stage highres --gram-weight 1.5 --steps 2 \
+  --resume "$OUTPUT/gram/checkpoints/step_00000002" "${STAGE_FIXED[@]}"
+test -f "$OUTPUT/highres/checkpoints/step_00000002/COMPLETE"
+echo "Stage transitions pretrain -> gram -> highres passed"
+
 # Validation probe on the step-2 checkpoint: all dummy studies labelled "val", 2 folds.
 python3 - "$DUMMY" <<'PY'
 import csv, pathlib, sys

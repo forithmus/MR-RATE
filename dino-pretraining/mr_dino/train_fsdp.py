@@ -70,8 +70,8 @@ def parse_args() -> argparse.Namespace:
                    help="coreg_space (default): sequences on the center T1's native grid; atlas_space: MNI 1 mm box")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
-    p.add_argument("--arch", choices=("tiny", "large", "hplus", "7b"), default="large",
-                   help="FORA lesson: a from-scratch ViT-L beat the 7B continuation; 7b kept for reference")
+    p.add_argument("--arch", choices=("tiny", "large", "hplus", "7b"), default="hplus",
+                   help="hplus = ViT-H+ 0.84B (MR default); large = ViT-L 0.30B (FORA CT); 7b kept for reference")
     p.add_argument("--steps", type=int, default=50_000)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument(
@@ -294,15 +294,19 @@ def checkpoint_root(output: Path) -> Path:
 
 
 def resolve_checkpoint(output: Path, resume: str) -> Path | None:
+    """``latest``, ``none``, or an explicit checkpoint (normally the previous stage's last one).
+
+    Once this stage has written its own complete checkpoint, that one wins over an explicit
+    path: a requeued gram/highres job keeps RESUME=<previous stage> in its environment and
+    must continue, not restart from the previous stage.
+    """
     if not resume or resume.lower() == "none":
         return None
-    if resume != "latest":
-        return Path(resume)
     marker = checkpoint_root(output) / "latest.txt"
-    if not marker.exists():
-        return None
-    path = checkpoint_root(output) / marker.read_text().strip()
-    return path if (path / "COMPLETE").exists() else None
+    own = checkpoint_root(output) / marker.read_text().strip() if marker.exists() else None
+    if own is not None and (own / "COMPLETE").exists():
+        return own
+    return None if resume == "latest" else Path(resume)
 
 
 def runtime_state(sampler_offset: int) -> dict:

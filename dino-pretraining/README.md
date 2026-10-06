@@ -80,7 +80,7 @@ ViT-L run uses (code: `mr_dino/recipe.py`, `objective.py`, `data.py`; tests:
 |---|---|
 | DINOv3 plain-linear prototype layer (std 0.02) never sharpened at lr 5e-5 → flat Sinkhorn targets for 10k steps (iBOT target entropy 8.0/11.5 nats, top-1 0.006) | cosine prototypes on both heads (`--normalize-prototypes`) |
 | 1k warmup + 7B settings drove positional drift in the last blocks | DINOv2 ViT-L recipe: lr 1e-3 at batch 1024 (sqrt-scaled), warmup 2,500, teacher-temperature warmup 0.04→0.07 over 10k, weight decay 0.04→0.4, EMA 0.992→1, AdamW β2 0.999, clip 3, layer-wise lr decay 0.9, patch-embed lr ×0.2, prototype layers frozen for 1,250 steps |
-| 7B continuation was worse than a from-scratch ViT-L at the same budget | `--arch large` (ViT-L, 16k/16k prototypes, heads 2048/256), batch 8/GPU, no FP8, no activation checkpointing |
+| 7B continuation was worse than a from-scratch ViT-L at the same budget | train from scratch at a trainable size: FORA used `--arch large` (ViT-L); MR uses `--arch hplus` (ViT-H+, 0.84B). 16k/16k prototypes, heads 2048/256, no FP8 |
 | global crops overlapping ≥75% were near-duplicates | ≥25% overlap per axis (`--global-overlap`), locals inside one of the two globals |
 | head-facing block encoded where a token sat in its crop (last-block position leakage 0.20, crop-quadrant prototype fields) | second global snapped to the patch lattice + **cross-crop twin-token objective** (`--cross-view-weight 1.0`): the student's patch prediction in one crop matches the teacher target of the same voxels in the other crop; leakage fell to 0.09 and stayed flat |
 | patch targets balanced over all masked tokens at once | Sinkhorn within 2×2×2 spatial bins of the crop (`--position-bins`, CAPI) |
@@ -96,13 +96,13 @@ features, at the risk of suppressing lesions visible in only one sequence).
 
 **Cross-sequence global pairs default to 0.25 (was 0.75).** A DINO target shared by a T1 and a
 FLAIR crop rewards discarding contrast-specific findings (FLAIR-only gliosis, SWI-only bleeds),
-and in atlas space the cheapest shared signal is the crop's atlas position. Many "different"
+and in an aligned space the cheapest shared signal is the crop's position. Many "different"
 sequences are the same contrast in another plane, so the true cross-contrast share is lower still.
 A small non-zero rate keeps one embedding space across contrasts for MIL bags that mix sequences;
 0 vs 0.25 is to be settled with the validation MIL probe.
 
-Production: `scripts/train_32n_vitl.sbatch`. `train_32n_7b.sbatch` / `train_32n_hplus.sbatch`
-keep the old recipe for reference only.
+Production: `scripts/train_mrdino.sbatch` (ViT-H+, 4 nodes, 3 phases; see below).
+`train_32n_7b.sbatch` / `train_32n_hplus.sbatch` keep the old recipe for reference only.
 
 **Healthy early training (FORA reference, ViT-L, global batch 128–1024):** iBOT target top-1
 rises from ~0.003 to >0.05 within 2.5k steps, patch target entropy falls, prototype usage stays
@@ -160,66 +160,106 @@ sbatch scripts/smoke_dummy.sbatch
 
 The job succeeds only after `step_00000002/COMPLETE` exists.
 
-## Production training
+## Production training (3 phases, ViT-H+, 4 nodes)
 
-The production launcher reads the extracted MR-RATE-coreg tree directly (`SPACE=atlas_space`
-switches back to the atlas tree):
+`scripts/train_mrdino.sbatch` runs every phase. Set `STAGE`; everything else has a phase
+default. It reads the extracted MR-RATE-coreg tree directly (`SPACE=atlas_space` switches to
+the atlas tree).
+
+**Model: ViT-H+ (0.84B).** This is the official DINOv3 H+ shape with 3-D patch embedding
+and RoPE: 32 blocks, width 1280, 20 heads, SwiGLU ×6, 2×16×16 patch = 2×8×8 mm tokens. The
+heads are 2048 → 256 with 16,384 cosine prototypes each.
+- **Why not 7B:** the 7B (the previous MR default) failed in FORA with the old recipe, and
+  4 nodes cannot train it.
+- **Why not ViT-L:** ViT-L (0.30B, `ARCH=large`) is the size proven with this recipe in
+  FORA CT, but it is smaller than wanted.
+- **Learning rate:** it was tuned on ViT-L. Watch the target metrics in the first
+  2–3k steps (see "Healthy early training" above).
+
+| | Phase 1 `pretrain` | Phase 2 `gram` | Phase 3 `highres` |
+|---|---|---|---|
+| steps | **50,000** (~10 passes over ~635k sequences) | 10,000 | 5,000 |
+| starts from | scratch | phase-1 end | phase-2 end (or phase-1 end, see below) |
+| global crops | 2 × 64×192×192 vox (64×96×96 mm, 4,608 tokens) | same | 2 × 64×384×384 (whole axial plane, 18,432 tokens) |
+| local crops | 8 × 32×96×96 | 8 × 32×96×96 | 4 × 32×192×192 |
+| batch / GPU (global on 4 nodes) | 8 (128) | 8 (128) | 4 (64) |
+| activation checkpointing | on (selective) | on | on |
+| peak lr (at batch 1024, sqrt-scaled) | 1e-3 → 3.5e-4 | 5e-4 → 1.8e-4 | 4e-4 → 1e-4 |
+| warmup / end lr | 2,500 / cosine to 1e-6 at step end | 250 / same | 500 / same |
+| weight decay | 0.04 → 0.4 | 0.1 → 0.4 | 0.04 → 0.2 |
+| teacher temperature | 0.04 → 0.07 over 10k | 0.07 fixed | 0.07 fixed |
+| teacher EMA | 0.992 → 1 | 0.996 → 1 | 0.996 → 1 |
+| prototype freeze | first 1,250 steps | none | none |
+| Gram weight | 0 | 1.0 | 1.5 |
+
+Phases 2 and 3 use FORA CT-DINO's tested settings (`phase2_gram_recipe.args`,
+`phase3_hires_recipe.args`). A phase restarts its schedule at step 0, so reusing phase-1
+values would redo the warmups: teacher temperature back to 0.04, prototypes frozen again.
+
+**Settings shared by all phases:**
+- **Losses:** DINO 1.0 + iBOT 1.0 (block masks 10–50%) + twin-token 1.0 + KoLeo 0.1.
+  Sinkhorn targets use 2×2×2 spatial bins.
+- **Sequences:** cross-sequence global pairs 25%, twin tokens within the same sequence.
+- **Optimiser:** AdamW β2 0.999, clip 3, layer-wise lr decay 0.9, patch-embed lr ×0.2, BF16.
+- **Infrastructure:** FSDP2, compiled blocks, checkpoint every 500 steps (last 6 kept).
+
+**Memory and speed per H200** (1-node benchmark, H+, compiled, real crop sizes):
+
+| Configuration | Result |
+|---|---|
+| phase-1 crops, batch 8, no checkpointing | **out of memory** |
+| phase-1 crops, batch 8 + checkpointing | 0.39 steps/s, 32 GiB (default) |
+| phase-1 crops, batch 4, no checkpointing | 0.95 steps/s, 83 GiB |
+| highres crops, batch 2, no checkpointing | 128 GiB (too tight) |
+| highres crops, batch 2 + checkpointing | 0.23 steps/s, 43 GiB |
+| highres crops, batch 4 + checkpointing | 0.10 steps/s, 81 GiB (default) |
+
+So on 4 nodes, as long as data loading keeps up, expect roughly:
+- phase 1: ~36 h;
+- phase 2: ~10 h (the Gram anchor adds a forward pass);
+- phase 3: ~14 h.
+
+Each phase is longer than one 24 h job; the launcher checkpoints at the wall-time signal
+and requeues itself.
 
 ```bash
 cd dino-pretraining
-DATA_FOLDER=/path/to/MR-RATE-coreg/mri \
-SPLITS_CSV=/path/to/splits.csv \
-OUTPUT=/path/to/mrdino3d_7b/pretrain \
-sbatch scripts/train_32n_vitl.sbatch   # FORA recipe (ViT-L); 7B launcher kept as legacy
+export DATA_FOLDER=/path/to/MR-RATE-coreg/mri SPLITS_CSV=/path/to/splits.csv
+R=/path/to/mrdino3d_hplus
+
+# phase 1 (+ validation probe of chosen steps, run alongside on the login node)
+STAGE=pretrain OUTPUT=$R/pretrain sbatch scripts/train_mrdino.sbatch
+nohup scripts/probe_watch.sh $R/pretrain 5000 10000 20000 30000 40000 50000 &
+
+# phase 2 from the phase-1 end
+STAGE=gram RESUME=$R/pretrain/checkpoints/step_00050000 OUTPUT=$R/gram sbatch scripts/train_mrdino.sbatch
+nohup scripts/probe_watch.sh $R/gram 5000 10000 &
+
+# phase 3 from the phase-2 end, only if the gram probe is >= the phase-1 probe;
+# otherwise RESUME=$R/pretrain/checkpoints/step_00050000 (FORA CT: Gram gave no gain)
+STAGE=highres RESUME=$R/gram/checkpoints/step_00010000 OUTPUT=$R/highres sbatch scripts/train_mrdino.sbatch
+nohup scripts/probe_watch.sh $R/highres 2500 5000 &
 ```
 
-**Nodes and length.** The launcher defaults to 32 nodes; run it on 4 with `sbatch --nodes=4 …`.
-Nothing else changes: the global batch becomes 4×4×8 = 128 and the peak learning rate is
-sqrt-scaled from batch 1024 automatically.
-- **Phase 1 = 50,000 steps.** At batch 128 that is ~10 passes over the ~635k training
-  sequences.
-- **FORA reference:** the same ViT-L recipe on 4 nodes (also batch 128) reached its best
-  validation MIL AUROC at ~23.5k steps.
-- **Set `STEPS` before the run starts.** The cosine learning-rate decay ends at `STEPS`, so it
-  is the real run length; use the probe to confirm the curve has flattened.
+**Rules:**
+- **`RESUME` for phases 2/3:** it names the previous phase's checkpoint only for the first
+  start. Once the phase has its own complete checkpoint, a requeued job continues from that
+  one. A phase-2/3 launch without `RESUME` and without its own checkpoints is refused.
+- **Resume does not cross spaces or arches:** checkpoints record their space, and the
+  probe rebuilds the arch from the checkpoint metadata.
+- **`STEPS` is the real run length:** the cosine decay ends there, so set it before
+  launching, not mid-run.
+- **Overrides:** `ARCH`, `STEPS`, `BATCH_SIZE`, `ACT_CKPT`, `GRAD_ACCUM_STEPS`, `WORKERS`,
+  `LOCAL_CROPS`, `CROSS_SEQUENCE_PROBABILITY`, `CROSS_VIEW_SEQUENCES`, `GRAM_WEIGHT`,
+  `RESUME`, `SPACE`, `COMPILE`. Container and paths: `SIF`, `DINOV3_ROOT`, `EXTRA_PIP`,
+  `ZIG_ARCHIVE` (see `scripts/train_node.sh`).
+- **Site-specific `#SBATCH` lines:** edit `--partition`, the `--exclude` bad-node list,
+  and `--mail-user` before running elsewhere. Slurm refuses unknown node names.
+- **Run `scripts/smoke_dummy.sbatch` first** (1 node, ~2 min) in the same container and
+  DINOv3 checkout. It trains, resumes and runs the probe on synthetic coreg data.
 
-Important overrides are `STEPS`, `BATCH_SIZE`, `GRAD_ACCUM_STEPS`, `WORKERS`,
-`LOCAL_CROPS`, `CROSS_SEQUENCE_PROBABILITY`, `WARMUP_STEPS`, `RESUME`, `FP8`,
-and `COMPILE`. The default warmup is 2,500 optimizer steps (FORA recipe). `RESUME=latest`
-loads the latest checkpoint only when its `COMPLETE` marker exists.
-
-Phases 2 and 3 resume from the previous stage's checkpoint (the schedule restarts;
-the Gram anchor is set to the incoming teacher):
-
-```bash
-STAGE=gram RESUME=/path/to/pretrain/checkpoints/step_00020000 \
-DATA_FOLDER=/path/to/MR-RATE-coreg/mri OUTPUT=/path/to/mrdino3d_vitl/gram \
-sbatch scripts/train_32n_vitl.sbatch          # 10,000 steps, Gram weight 1.0
-STAGE=highres RESUME=/path/to/gram/checkpoints/step_00010000 \
-DATA_FOLDER=/path/to/MR-RATE-coreg/mri OUTPUT=/path/to/mrdino3d_vitl/highres \
-sbatch scripts/train_32n_vitl.sbatch          # 5,000 steps, Gram 1.5, 64x384x384 globals
-```
-
-Probe the phase-2 end against the phase-1 end first. If Gram lost AUROC, start
-phase 3 from the phase-1 checkpoint instead (FORA CT did this; there Gram gave no gain).
-
-The launcher catches the Slurm wall-time signal, writes a complete distributed
-checkpoint with per-rank sampler and RNG state, and requeues the same job. Do
-not start production before `scripts/smoke_dummy.sbatch` passes in the same
-container and DINOv3 checkout.
-
-The same 32-node H+ fallback used by CT-DINO is also available:
-
-```bash
-DATA_FOLDER=/path/to/MR-RATE-atlas/mri \
-OUTPUT=/path/to/mrdino3d_hplus/pretrain \
-sbatch scripts/train_32n_hplus.sbatch
-```
-
-Both production launchers include the established bad-node exclusions, Slurm
-mail notifications, 24-hour requeue policy, deadline checkpointing, node-local
-compiler caches, InfiniBand/NCCL settings, and optional split filtering. The
-7B path is the production target; H+ is a smaller DDP fallback.
+`train_32n_7b.sbatch` and `train_32n_hplus.sbatch` are the old 7B-continuation recipe
+(32-node DDP/FSDP) and are kept for reference only.
 
 ## Validation probe (checkpoint scoring)
 

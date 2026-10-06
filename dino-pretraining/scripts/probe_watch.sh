@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Probe chosen steps of a running MR DINO stage as soon as their checkpoints appear.
 # Usage (login node, e.g. under nohup): DATA_FOLDER=<coreg tree> probe_watch.sh RUN_DIR STEP [STEP ...]
-#   RUN_DIR is a stage output (…/mrdino3d_vitl/pretrain). For each step the EMA-teacher backbone is
+#   RUN_DIR is a stage output (…/mrdino3d_hplus/pretrain). For each step the EMA-teacher backbone is
 #   exported at once to RUN_DIR/probe/step_N/teacher.pt (checkpoint rotation cannot delete it), then
 #   probe_checkpoint.sbatch is submitted. Results: RUN_DIR/probe/step_N/results.json + summary.txt.
 set -euo pipefail
