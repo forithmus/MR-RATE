@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target-spacing", type=float, nargs=3, default=(1.0, 0.5, 0.5))
     p.add_argument("--target-shape", type=int, nargs=3, default=(256, 384, 384))
     p.add_argument("--posterior-shift-mm", type=float, default=15.0)
-    p.add_argument("--cross-sequence-probability", type=float, default=0.75)
+    p.add_argument("--cross-sequence-probability", type=float, default=0.25)
     p.add_argument("--candidate-trials", type=int, default=12)
     p.add_argument("--save-every", type=int, default=500)
     p.add_argument("--keep-checkpoints", type=int, default=6)

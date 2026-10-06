@@ -105,7 +105,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gram-weight", type=float, default=1.0)
     p.add_argument("--gram-max-tokens", type=int, default=1024)
     p.add_argument("--ibot-loss-chunk-size", type=int, default=1024)
-    p.add_argument("--cross-sequence-probability", type=float, default=0.75)
+    p.add_argument("--cross-sequence-probability", type=float, default=0.25)
     p.add_argument("--candidate-trials", type=int, default=12)
     p.add_argument("--clip-grad", type=float, default=3.0)
     p.add_argument("--save-every", type=int, default=500)

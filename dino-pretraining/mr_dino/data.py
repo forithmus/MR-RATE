@@ -375,7 +375,7 @@ class MRAtlasDINO3DDataset(Dataset):
         posterior_shift_mm: float = 15.0,
         cache_files: list[str] | None = None,
         raw_samples: list[dict] | None = None,
-        cross_sequence_probability: float = 0.75,
+        cross_sequence_probability: float = 0.25,
         candidate_trials: int = 12,
         seed: int = 3407,
         global_overlap: float = 0.25,

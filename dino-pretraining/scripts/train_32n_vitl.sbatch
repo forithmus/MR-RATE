@@ -63,7 +63,7 @@ srun --nodes="$SLURM_NNODES" --ntasks="$SLURM_NNODES" --ntasks-per-node=1 \
   --output-dir "$OUTPUT" --stage "$STAGE" --arch large --steps "$STEPS" \
   --batch-size "${BATCH_SIZE:-8}" --grad-accum-steps "${GRAD_ACCUM_STEPS:-1}" \
   --workers "${WORKERS:-8}" --local-crops "${LOCAL_CROPS:-8}" \
-  --cross-sequence-probability "${CROSS_SEQUENCE_PROBABILITY:-0.75}" \
+  --cross-sequence-probability "${CROSS_SEQUENCE_PROBABILITY:-0.25}" \
   --cross-view-sequences "${CROSS_VIEW_SEQUENCES:-same}" \
   --resume "${RESUME:-latest}" --gram-weight "$GRAM_WEIGHT" \
   "${COMPILE_ARGS[@]}" --no-fp8 --no-activation-checkpointing

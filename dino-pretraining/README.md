@@ -34,9 +34,9 @@ keeps only its current study stack in memory, avoiding repeated NIfTI decoding.
 For each anchor:
 
 1. Global view 1 uses the anchor sequence.
-2. Global view 2 uses a different atlas-aligned sequence with probability 0.75
-   (or the anchor when no second sequence exists). The two crops overlap by at
-   least 75% on every axis.
+2. Global view 2 uses a different atlas-aligned sequence with probability 0.25
+   (`--cross-sequence-probability`; otherwise, or when no second sequence exists,
+   the anchor). The two crops overlap by at least 25% on every axis.
 3. Local crops stay inside the global intersection and may come from any
    aligned sequence.
 4. DINO and KoLeo therefore learn anatomy shared across MR contrasts.
@@ -74,9 +74,16 @@ Already fixed here before the port: the distributed Sinkhorn uses the actual glo
 
 **MR-specific choice:** twin tokens are paired only when both global crops show the same
 sequence (`--cross-view-sequences same`), preserving this module's rule that cross-sequence
-images are never patch-level targets. With `--cross-sequence-probability 0.75` that is ~25% of
+images are never patch-level targets. With `--cross-sequence-probability 0.25` that is ~75% of
 samples; `any` would also pair co-registered voxels across contrasts (contrast-invariant patch
 features, at the risk of suppressing lesions visible in only one sequence).
+
+**Cross-sequence global pairs default to 0.25 (was 0.75).** A DINO target shared by a T1 and a
+FLAIR crop rewards discarding contrast-specific findings (FLAIR-only gliosis, SWI-only bleeds),
+and in atlas space the cheapest shared signal is the crop's atlas position. Many "different"
+sequences are the same contrast in another plane, so the true cross-contrast share is lower still.
+A small non-zero rate keeps one embedding space across contrasts for MIL bags that mix sequences;
+0 vs 0.25 is to be settled with the validation MIL probe.
 
 Production: `scripts/train_32n_vitl.sbatch`. `train_32n_7b.sbatch` / `train_32n_hplus.sbatch`
 keep the old recipe for reference only.
