@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
     p.add_argument("--arch", choices=("tiny", "large", "hplus"), default="large")
-    p.add_argument("--steps", type=int, default=125_000)
+    p.add_argument("--steps", type=int, default=30_000)
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=3407)

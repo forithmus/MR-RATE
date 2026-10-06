@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
     p.add_argument("--arch", choices=("tiny", "large", "hplus", "7b"), default="large",
                    help="FORA lesson: a from-scratch ViT-L beat the 7B continuation; 7b kept for reference")
-    p.add_argument("--steps", type=int, default=125_000)
+    p.add_argument("--steps", type=int, default=30_000)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument(
         "--grad-accum-steps",
