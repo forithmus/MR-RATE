@@ -66,7 +66,7 @@ def test_load_pathology_schema_formats(tmp_path):
         load_pathology_schema(empty)
 
 
-def test_load_neurovfm_diagnoses_format(tmp_path):
+def test_load_mri_diagnoses_format(tmp_path):
     diagnoses = tmp_path / "diagnoses.json"
     diagnoses.write_text(
         json.dumps(
@@ -91,7 +91,7 @@ def test_load_neurovfm_diagnoses_format(tmp_path):
     assert schema["brain_abscess"][-1] == "cerebral abscess"
 
 
-def test_bundled_extractor_is_current_neurovfm74_pipeline():
+def test_bundled_extractor_is_current_mri74_pipeline():
     schema = load_pathology_schema(_DEFAULT_DIAGNOSES_JSON)
     assert len(schema) == 74
     assert list(schema)[:3] == [
@@ -100,19 +100,19 @@ def test_bundled_extractor_is_current_neurovfm74_pipeline():
         "brain_contusion",
     ]
     assert list(schema)[-1] == "spine_syrinx"
-    assert (_DEFAULT_CLASSIFIER_DIR / "extract_neurovfm_dx_gemma.py").is_file()
+    assert (_DEFAULT_CLASSIFIER_DIR / "extract_mri_dx_gemma.py").is_file()
     assert (_DEFAULT_CLASSIFIER_DIR / "merge_labels.py").is_file()
 
 
-def test_bundled_prompt_uses_neurovfm_classification_rules():
-    source = (_DEFAULT_CLASSIFIER_DIR / "extract_neurovfm_dx_gemma.py").read_text()
+def test_bundled_prompt_uses_mri_classification_rules():
+    source = (_DEFAULT_CLASSIFIER_DIR / "extract_mri_dx_gemma.py").read_text()
     tree = ast.parse(source)
     assignment = next(
         node
         for node in tree.body
         if isinstance(node, ast.Assign)
         and any(
-            isinstance(target, ast.Name) and target.id == "NEUROVFM_PROMPT"
+            isinstance(target, ast.Name) and target.id == "MRI_DIAGNOSIS_PROMPT"
             for target in node.targets
         )
     )
@@ -126,7 +126,7 @@ def test_bundled_prompt_uses_neurovfm_classification_rules():
 def test_vllm_backend_rejects_legacy_pathology_schema(tmp_path):
     legacy = tmp_path / "legacy.json"
     legacy.write_text(json.dumps({"pathologies": {"Gliosis": {}}}))
-    with pytest.raises(ValueError, match="NeuroVFM"):
+    with pytest.raises(ValueError, match="MRI"):
         extract_vllm_labels(
             [{"study_uid": "s1", "findings_pred": "Gliosis."}],
             load_pathology_schema(legacy),
@@ -140,7 +140,7 @@ def test_vllm_backend_rejects_legacy_pathology_schema(tmp_path):
         )
 
 
-def test_vllm_wrapper_invokes_neurovfm_extractor_and_merges(tmp_path, monkeypatch):
+def test_vllm_wrapper_invokes_mri_extractor_and_merges(tmp_path, monkeypatch):
     diagnoses = tmp_path / "diagnoses.json"
     diagnoses.write_text(
         json.dumps(
@@ -154,7 +154,7 @@ def test_vllm_wrapper_invokes_neurovfm_extractor_and_merges(tmp_path, monkeypatc
     )
     classifier_dir = tmp_path / "classifier"
     classifier_dir.mkdir()
-    (classifier_dir / "extract_neurovfm_dx_gemma.py").write_text("")
+    (classifier_dir / "extract_mri_dx_gemma.py").write_text("")
     (classifier_dir / "merge_labels.py").write_text("")
     calls = []
 
@@ -186,7 +186,7 @@ def test_vllm_wrapper_invokes_neurovfm_extractor_and_merges(tmp_path, monkeypatc
         batch_size=2,
         seed=42,
     )
-    assert calls[0][1].endswith("extract_neurovfm_dx_gemma.py")
+    assert calls[0][1].endswith("extract_mri_dx_gemma.py")
     assert "--diagnoses_json" in calls[0]
     assert "--pathologies_json" not in calls[0]
     assert labeled == [

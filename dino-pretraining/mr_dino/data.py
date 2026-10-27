@@ -376,6 +376,26 @@ def _raw_volume(
     return torch.from_numpy(np.ascontiguousarray(array)).to(torch.bfloat16)
 
 
+def raw_volume_with_support(path, target_shape, target_spacing, posterior_shift_mm):
+    """Same training image, plus original nonzero support before normalization.
+
+    Z-score changes the value of raw air, whereas crop padding stays zero.
+    Consequently neither the normalized minimum nor normalized zero correctly
+    identifies both air and padding. Geometry of this mask matches the image.
+    """
+    previous = previous_mr_data_module()
+    shift = int(round(posterior_shift_mm / target_spacing[2]))
+    raw = previous.load_and_resample_nii(path, target_spacing)
+    support = previous.crop_or_pad((raw != 0).astype(np.float32), target_shape, shift)
+    image = previous.crop_or_pad(previous.NORMALIZERS["zscore"]().normalize(raw), target_shape, shift)
+    return (torch.from_numpy(np.ascontiguousarray(image)).bfloat16(),
+            torch.from_numpy(np.ascontiguousarray(support > 0)))
+
+
+def is_mri_sequence(path):
+    return previous_mr_data_module().is_mri_image_file(Path(path).name)
+
+
 class MRAlignedDINO3DDataset(Dataset):
     """Study-level SSL samples from voxel-aligned, variable-count MR sequences."""
 
@@ -406,7 +426,7 @@ class MRAlignedDINO3DDataset(Dataset):
             raise ValueError("cross_sequence_probability must be in [0, 1]")
         if not 0 <= global_overlap <= 1:
             raise ValueError("global_overlap must be in [0, 1]")
-        # FORA fix: the two global crops only need >= 25% overlap per axis (0.75 made them near
+        # MR-RATE fix: the two global crops only need >= 25% overlap per axis (0.75 made them near
         # duplicates), and the second crop is snapped to the patch lattice so that every token in
         # the overlap has an exact twin for the cross-crop patch objective.
         self.global_overlap = float(global_overlap)
@@ -545,7 +565,7 @@ class MRAlignedDINO3DDataset(Dataset):
         local_views, local_sequences, local_starts = [], [], []
         for _ in range(self.crop_spec.local_crops):
             sequence = rng.randrange(n_sequences)
-            # FORA fix: locals lie inside ONE of the globals (the intersection of two crops with
+            # MR-RATE fix: locals lie inside ONE of the globals (the intersection of two crops with
             # 25% overlap can be thinner than a local crop).
             parent = global_starts[rng.randrange(2)]
             lo = parent

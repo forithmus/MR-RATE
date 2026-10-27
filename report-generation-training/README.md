@@ -1,7 +1,7 @@
 # MR-RATE single-writer report training
 
 This is a standalone report-generation training layer for MR-RATE. It does not
-modify FORA or an existing MR-RATE checkout.
+modify MR-RATE or an existing MR-RATE checkout.
 
 The writer target is the natural `findings` field from
 `MR-RATE-validation/reports/all_reports.csv`. The standardized
@@ -211,8 +211,8 @@ given.
 ## 8. Evaluation: clinical accuracy and NLG metrics
 
 Clinical accuracy re-extracts pathology labels from the generated reports
-with the NeuroVFM MRI diagnosis prompt used to build the current 74-label
-ground truth (`data-preprocessing/.../07_neurovfm_diagnosis_extraction`),
+with the MRI MRI diagnosis prompt used to build the current 74-label
+ground truth (`data-preprocessing/.../07_mri_diagnosis_extraction`),
 then compares them against the ground-truth labels CSV. The bundled schema
 contains the exact 74 diagnosis keys and guidance used for the completed
 MR-RATE extraction. On a GPU node with vLLM and Gemma 4 available:
@@ -226,8 +226,8 @@ export WORK_DIR="runs/label_extraction_test"
 sbatch scripts/slurm_extract_labels.sh
 ```
 
-The launcher uses the bundled `neurovfm_mri_diagnoses.json` by default. Set
-`DIAGNOSES_JSON` only to evaluate a deliberately different NeuroVFM-format
+The launcher uses the bundled `mri_diagnoses_74.json` by default. Set
+`DIAGNOSES_JSON` only to evaluate a deliberately different MRI-format
 schema; the vLLM backend rejects the legacy 37-pathology JSON so the two
 label definitions cannot be mixed silently.
 

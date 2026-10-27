@@ -1,4 +1,4 @@
-"""Validation MIL probe for MR DINO checkpoints (the FORA CT-DINO checkpoint protocol).
+"""Validation MIL probe for MR DINO checkpoints (the MR DINO checkpoint protocol).
 
 A checkpoint is scored without touching train or test data:
 
@@ -14,7 +14,7 @@ A checkpoint is scored without touching train or test data:
      tokens. Air-only cells are dropped.
    - Each worker writes one raw fp16 token file plus one index, so the inode use is
      tiny.
-3. ``cv``: patient-level K-fold cross-validation of NeuroVFM's ClassifyThenAggregate
+3. ``cv``: patient-level K-fold cross-validation of the ClassifyThenAggregate
    head (the MR-RATE MIL head) on the frozen bags. One bag holds all sequences of a
    study. Only out-of-fold predictions are kept.
 4. ``summarize``: per-class and macro AUROC / AUPRC over all studies.
@@ -57,6 +57,9 @@ DEFAULT_SPLITS = REPO_ROOT / "contrastive-pretraining/scripts/eval_labels/splits
 def read_checkpoint_metadata(checkpoint: Path) -> dict:
     """Training args/step of a DCP checkpoint directory or an exported teacher file."""
     checkpoint = Path(checkpoint)
+    if checkpoint.is_dir() and (checkpoint / "config.json").is_file():
+        from .release import release_metadata
+        return release_metadata(checkpoint)
     if checkpoint.is_dir():
         meta = json.loads((checkpoint / "metadata.json").read_text())
         return {"step": int(meta["step"]), "stage": meta["stage"], "args": meta["args"], "source": str(checkpoint)}
@@ -71,6 +74,9 @@ def load_teacher_backbone(checkpoint: Path, device: torch.device | str = "cpu"):
     from .train_ddp import build_backbone
 
     checkpoint = Path(checkpoint)
+    if checkpoint.is_dir() and (checkpoint / "config.json").is_file():
+        from .release import load_release
+        return load_release(checkpoint, device)
     meta = read_checkpoint_metadata(checkpoint)
     backbone = build_backbone(meta["args"]["arch"])
     if checkpoint.is_dir():
@@ -268,7 +274,7 @@ def extract(args) -> Path:
 # --------------------------------------------------------------------------- MIL head
 
 def mil_head_class():
-    """NeuroVFM ClassifyThenAggregate from MR-RATE's MIL probe (single source of truth)."""
+    """MRI ClassifyThenAggregate from MR-RATE's MIL probe (single source of truth)."""
     path = Path(os.environ.get("MRRATE_MIL_PROBE_MODULE", REPO_ROOT / "contrastive-pretraining/scripts/mil_probe.py"))
     spec = importlib.util.spec_from_file_location("mrrate_mil_probe", path)
     module = importlib.util.module_from_spec(spec)

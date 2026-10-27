@@ -25,7 +25,7 @@ if [[ ! -d "$project_dir/src/mrrate_report_training" ]]; then
   echo "Cannot locate report-generation-training; set PROJECT_DIR explicitly" >&2
   exit 2
 fi
-diagnoses_json="${DIAGNOSES_JSON:-$project_dir/../data-preprocessing/src/mr_rate_preprocessing/reports_preprocessing/07_neurovfm_diagnosis_extraction/data/neurovfm_mri_diagnoses.json}"
+diagnoses_json="${DIAGNOSES_JSON:-$project_dir/../data-preprocessing/src/mr_rate_preprocessing/reports_preprocessing/07_mri_diagnosis_extraction/data/mri_diagnoses_74.json}"
 extra_pip="${EXTRA_PIP:-/hnvme/workspace/b180dc51-sezgin/extra-pip}"
 host_pythonpath="$extra_pip:$project_dir/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONPATH="$host_pythonpath"

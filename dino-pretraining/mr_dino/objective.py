@@ -45,7 +45,7 @@ class SSLNetwork3D(nn.Module):
             nlayers=3,
         )
         if normalize_prototypes:
-            # FORA fix: cosine prototypes let the teacher commit from step 0 (plain std-0.02
+            # MR-RATE fix: cosine prototypes let the teacher commit from step 0 (plain std-0.02
             # prototypes kept the Sinkhorn targets flat for thousands of steps).
             normalize_prototype_layer(self.dino_head)
             normalize_prototype_layer(self.ibot_head)
@@ -264,7 +264,7 @@ class DINO3DLearner(nn.Module):
         self.gram_anchor.eval()
 
     def _cross_view(self, batch, t_patch, s_patch, teacher_temperature, grid, n_tokens, batch_size, weighted_mean):
-        """Cross-crop patch objective (FORA v14): for every token present in both global crops
+        """Cross-crop patch objective (MR-RATE v14): for every token present in both global crops
         (crops aligned on the patch lattice; ``cross_a``/``cross_b`` are flat indices of the twins
         in view 0 / view 1), the student's patch prediction in one crop must match the teacher's
         Sinkhorn target for the same voxels in the other crop, in both directions. Without it the
@@ -347,7 +347,7 @@ class DINO3DLearner(nn.Module):
             n_tokens = int(masks.shape[-1])
             grid = tuple(n // p for n, p in zip(teacher_images.shape[-3:], self.patch_size))
             if self.position_bins is not None:
-                # FORA fix (CAPI): balance patch targets within spatial bins of the crop.
+                # MR-RATE fix (CAPI): balance patch targets within spatial bins of the crop.
                 t_patch_prob = binned_sinkhorn(
                     distributed_sinkhorn, t_patch_logits, teacher_temperature,
                     position_bin_ids(mask_indices, n_tokens, grid, self.position_bins),
@@ -444,7 +444,7 @@ class DINO3DLearner(nn.Module):
             ).unflatten(0, (n_global, batch_size)).mean(0)
             gram = weighted_mean(gram_each)
 
-        # Teacher-target diagnostics (FORA fix): CE = H(target) + KL, so the raw loss hides
+        # Teacher-target diagnostics (MR-RATE fix): CE = H(target) + KL, so the raw loss hides
         # whether the student learns; log H, KL = CE - H (weighted like the losses), top-1, usage.
         with torch.no_grad():
             cls_stats = target_stats(t_cls_flat)

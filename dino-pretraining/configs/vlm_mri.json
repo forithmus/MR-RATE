@@ -1,0 +1,30 @@
+{
+  "mode": "offline",
+  "release": "/path/to/mrdino3d_hplus_atlas_infer_highres_step5000",
+  "cache_dir": "/path/to/mri_prefix_cache",
+  "data_folder": "/path/to/MR-RATE-atlas/mri",
+  "splits_csv": "/path/to/splits.csv",
+  "sentences": "/path/to/findings_sentences.jsonl",
+  "normalization": "/path/to/mri_normalization.pt",
+  "allow_incomplete_data": false,
+  "training": {
+    "epochs": 10,
+    "seed": 1,
+    "warmup_steps": 200,
+    "position_freqs": 4,
+    "max_sentences": 34,
+    "max_tokens": 128,
+    "save_every": 200,
+    "model": {
+      "dim": 512,
+      "text_model": "/path/to/BiomedVLP-CXR-BERT-specialized",
+      "lr_block": 0.00001,
+      "lr_proj": 0.00005,
+      "lr_text": 0.000005,
+      "lr_temp": 0.0005,
+      "wd": 0.05,
+      "pool_temperature_init": 14.285714285714285,
+      "position_scale": 1.0
+    }
+  }
+}

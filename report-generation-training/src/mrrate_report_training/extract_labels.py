@@ -1,10 +1,10 @@
-"""Extract NeuroVFM diagnosis labels from generated reports.
+"""Extract MRI diagnosis labels from generated reports.
 
-The ``vllm`` backend uses the same NeuroVFM MRI diagnosis extraction prompt,
+The ``vllm`` backend uses the same MRI MRI diagnosis extraction prompt,
 74-diagnosis guidance schema, parser, and deterministic Gemma settings used to
 build the current MR-RATE labels. Generated findings are staged as
 ``batch00_reports.csv`` and passed to
-``data-preprocessing/.../07_neurovfm_diagnosis_extraction``.
+``data-preprocessing/.../07_mri_diagnosis_extraction``.
 
 The ``keyword`` backend is a deterministic name/synonym matcher with basic
 negation handling. It exists so unit tests and the dummy end-to-end trial can
@@ -16,7 +16,7 @@ silently drops empty findings rows; an empty report asserts no diagnosis).
 CLI:
     python -m mrrate_report_training.extract_labels \
         --generated-csv generated_val.csv \
-        --diagnoses-json neurovfm_mri_diagnoses.json \
+        --diagnoses-json mri_diagnoses_74.json \
         --output-csv pred_labels_val.csv \
         --backend vllm --work-dir runs/label_extraction_val
 """
@@ -43,10 +43,10 @@ _DEFAULT_CLASSIFIER_DIR = (
     / "src"
     / "mr_rate_preprocessing"
     / "reports_preprocessing"
-    / "07_neurovfm_diagnosis_extraction"
+    / "07_mri_diagnosis_extraction"
 )
 _DEFAULT_DIAGNOSES_JSON = (
-    _DEFAULT_CLASSIFIER_DIR / "data" / "neurovfm_mri_diagnoses.json"
+    _DEFAULT_CLASSIFIER_DIR / "data" / "mri_diagnoses_74.json"
 )
 
 _NEGATIONS = {"no", "not", "without", "absent", "negative", "denies", "denied"}
@@ -188,7 +188,7 @@ def _resume_labels_dir(
         input_hash.update(str(row[text_column] or "").encode())
         input_hash.update(b"\0")
     manifest = {
-        "format": "mrrate_neurovfm_extraction_v1",
+        "format": "mrrate_mri_extraction_v1",
         "studies": len(rows),
         "input_sha256": input_hash.hexdigest(),
         "diagnoses_sha256": hashlib.sha256(diagnoses_json.read_bytes()).hexdigest(),
@@ -230,19 +230,19 @@ def extract_vllm_labels(
     batch_size: int,
     seed: int,
 ) -> list[dict]:
-    classifier = classifier_dir / "extract_neurovfm_dx_gemma.py"
+    classifier = classifier_dir / "extract_mri_dx_gemma.py"
     merger = classifier_dir / "merge_labels.py"
     if not classifier.exists() or not merger.exists():
         raise FileNotFoundError(
-            f"NeuroVFM diagnosis extractor not found under {classifier_dir}"
+            f"MRI diagnosis extractor not found under {classifier_dir}"
         )
     # Refuse the legacy 37-pathology schema: it belongs to the historical
-    # three-step classifier and does not carry the NeuroVFM diagnosis guidance.
+    # three-step classifier and does not carry the MRI diagnosis guidance.
     payload = json.loads(diagnoses_json.read_text())
     diagnoses = payload.get("diagnoses") if isinstance(payload, dict) else None
     if not isinstance(diagnoses, list) or not diagnoses:
         raise ValueError(
-            f"{diagnoses_json}: the vllm backend requires the NeuroVFM "
+            f"{diagnoses_json}: the vllm backend requires the MRI "
             'format {"diagnoses": [{"key": ..., "guidance": ...}, ...]}'
         )
     reports_dir, empty = _stage_reports(rows, work_dir, text_column)
@@ -251,7 +251,7 @@ def extract_vllm_labels(
             {"study_uid": row["study_uid"], "labels": {name: 0 for name in schema}}
             for row in rows
         ]
-    # Keep rank files across requeues; the NeuroVFM extractor resumes globally
+    # Keep rank files across requeues; the MRI extractor resumes globally
     # by study_uid and checkpoints atomically after every batch.
     labels_dir = _resume_labels_dir(
         rows,
@@ -331,7 +331,7 @@ def main() -> None:
     schema_group = parser.add_mutually_exclusive_group()
     schema_group.add_argument(
         "--diagnoses-json",
-        help="NeuroVFM diagnoses JSON; defaults to the bundled 74-diagnosis schema",
+        help="MRI diagnoses JSON; defaults to the bundled 74-diagnosis schema",
     )
     schema_group.add_argument(
         "--pathologies-json",

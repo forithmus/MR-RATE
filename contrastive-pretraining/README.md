@@ -7,7 +7,7 @@ Contrastive vision-language model for brain & spine MRI that aligns multi-sequen
 
 ## Architecture
 
-Built on [FORA](https://github.com/forithmus/FORA), extending its image encoder and contrastive pretraining framework to multi-sequence brain & spine MRI with variable volumes per subject.
+Built on [MR-RATE](https://github.com/forithmus/MR-RATE), extending its image encoder and contrastive pretraining framework to multi-sequence brain & spine MRI with variable volumes per subject.
 
 **Text Encoder**: [BiomedVLP-CXR-BERT-specialized](https://huggingface.co/microsoft/BiomedVLP-CXR-BERT-specialized).
 

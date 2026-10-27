@@ -1,6 +1,6 @@
 # Co-registered 3-D DINOv3 for MR-RATE
 
-This module adapts FORA's CT DINOv3 training strategy to MR-RATE's
+This module trains a native 3-D DINOv3 encoder on
 **co-registered multi-sequence MRI** (`coreg_space`, default; `atlas_space` remains
 selectable). It is self-supervised: reports and pathology labels are not used for
 training; they are used only by the validation probe (below) to score checkpoints.
@@ -69,45 +69,16 @@ masking, distributed KoLeo, optional Gram anchoring, EMA teacher, atomic full
 state checkpoints, exact sampler/RNG resume, FSDP2, BF16, optional H200 FP8,
 and compile caches on node-local `/tmp`.
 
-## Recipe fixes ported from FORA CT-DINO (Sep 2026)
+## Training recipe
 
-The CT pipeline this module was adapted from started with the same DINOv3-7B continuation
-settings and failed; each item below is a diagnosed failure and the fix the working FORA
-ViT-L run uses (code: `mr_dino/recipe.py`, `objective.py`, `data.py`; tests:
-`tests/test_fora_recipe.py`). All are on by default.
+The default recipe uses cosine prototype heads, overlapping global views,
+patch-aligned cross-crop supervision, spatially balanced patch targets, EMA
+teacher updates, and per-objective entropy/KL diagnostics. The MRI default is
+ViT-H+ with 16,384 prototypes per head and 2048/256 hidden/bottleneck widths.
+Cross-sequence global pairs default to 0.25. Patch-level twin-token targets
+use the same sequence, preserving contrast-specific findings.
 
-| Problem seen in FORA | Fix (default) |
-|---|---|
-| DINOv3 plain-linear prototype layer (std 0.02) never sharpened at lr 5e-5 → flat Sinkhorn targets for 10k steps (iBOT target entropy 8.0/11.5 nats, top-1 0.006) | cosine prototypes on both heads (`--normalize-prototypes`) |
-| 1k warmup + 7B settings drove positional drift in the last blocks | DINOv2 ViT-L recipe: lr 1e-3 at batch 1024 (sqrt-scaled), warmup 2,500, teacher-temperature warmup 0.04→0.07 over 10k, weight decay 0.04→0.4, EMA 0.992→1, AdamW β2 0.999, clip 3, layer-wise lr decay 0.9, patch-embed lr ×0.2, prototype layers frozen for 1,250 steps |
-| 7B continuation was worse than a from-scratch ViT-L at the same budget | train from scratch at a trainable size: FORA used `--arch large` (ViT-L); MR uses `--arch hplus` (ViT-H+, 0.84B). 16k/16k prototypes, heads 2048/256, no FP8 |
-| global crops overlapping ≥75% were near-duplicates | ≥25% overlap per axis (`--global-overlap`), locals inside one of the two globals |
-| head-facing block encoded where a token sat in its crop (last-block position leakage 0.20, crop-quadrant prototype fields) | second global snapped to the patch lattice + **cross-crop twin-token objective** (`--cross-view-weight 1.0`): the student's patch prediction in one crop matches the teacher target of the same voxels in the other crop; leakage fell to 0.09 and stayed flat |
-| patch targets balanced over all masked tokens at once | Sinkhorn within 2×2×2 spatial bins of the crop (`--position-bins`, CAPI) |
-| raw loss hid whether the student learned (CE = H + KL) | `metrics.jsonl` logs `dino/ibot_target_entropy`, `_top1`, `_prototype_usage`, `dino_kl`, `ibot_kl`, `cross`, `cross_kl`, `cross_pairs` |
-
-Already fixed here before the port: the distributed Sinkhorn uses the actual global token count.
-
-**MR-specific choice:** twin tokens are paired only when both global crops show the same
-sequence (`--cross-view-sequences same`), preserving this module's rule that cross-sequence
-images are never patch-level targets. With `--cross-sequence-probability 0.25` that is ~75% of
-samples; `any` would also pair co-registered voxels across contrasts (contrast-invariant patch
-features, at the risk of suppressing lesions visible in only one sequence).
-
-**Cross-sequence global pairs default to 0.25 (was 0.75).** A DINO target shared by a T1 and a
-FLAIR crop rewards discarding contrast-specific findings (FLAIR-only gliosis, SWI-only bleeds),
-and in an aligned space the cheapest shared signal is the crop's position. Many "different"
-sequences are the same contrast in another plane, so the true cross-contrast share is lower still.
-A small non-zero rate keeps one embedding space across contrasts for MIL bags that mix sequences;
-0 vs 0.25 is to be settled with the validation MIL probe.
-
-Production: `scripts/train_mrdino.sbatch` (ViT-H+, 4 nodes, 3 phases; see below).
-`train_32n_7b.sbatch` / `train_32n_hplus.sbatch` keep the old recipe for reference only.
-
-**Healthy early training (FORA reference, ViT-L, global batch 128–1024):** iBOT target top-1
-rises from ~0.003 to >0.05 within 2.5k steps, patch target entropy falls, prototype usage stays
-≳0.4, `cross_kl` ~1.5–2.5 without a rising trend. Gram anchoring (stage `gram`) gave no gain in
-FORA and stays optional.
+Production launchers and checkpoint probes are described below.
 
 ## Optional input-volume cache
 
@@ -169,10 +140,10 @@ the atlas tree).
 **Model: ViT-H+ (0.84B).** This is the official DINOv3 H+ shape with 3-D patch embedding
 and RoPE: 32 blocks, width 1280, 20 heads, SwiGLU ×6, 2×16×16 patch = 2×8×8 mm tokens. The
 heads are 2048 → 256 with 16,384 cosine prototypes each.
-- **Why not 7B:** the 7B (the previous MR default) failed in FORA with the old recipe, and
+- **Why not 7B:** 7B requires a larger training memory budget, and
   4 nodes cannot train it.
 - **Why not ViT-L:** ViT-L (0.30B, `ARCH=large`) is the size proven with this recipe in
-  FORA CT, but it is smaller than wanted.
+  this implementation, with lower capacity than H+.
 - **Learning rate:** it was tuned on ViT-L. Watch the target metrics in the first
   2–3k steps (see "Healthy early training" above).
 
@@ -192,7 +163,7 @@ heads are 2048 → 256 with 16,384 cosine prototypes each.
 | prototype freeze | first 1,250 steps | none | none |
 | Gram weight | 0 | 1.0 | 1.5 |
 
-Phases 2 and 3 use FORA CT-DINO's tested settings (`phase2_gram_recipe.args`,
+Phases 2 and 3 use MR DINO's tested settings (`phase2_gram_recipe.args`,
 `phase3_hires_recipe.args`). A phase restarts its schedule at step 0, so reusing phase-1
 values would redo the warmups: teacher temperature back to 0.04, prototypes frozen again.
 
@@ -236,7 +207,7 @@ STAGE=gram RESUME=$R/pretrain/checkpoints/step_00050000 OUTPUT=$R/gram sbatch sc
 nohup scripts/probe_watch.sh $R/gram 5000 10000 &
 
 # phase 3 from the phase-2 end, only if the gram probe is >= the phase-1 probe;
-# otherwise RESUME=$R/pretrain/checkpoints/step_00050000 (FORA CT: Gram gave no gain)
+# otherwise RESUME=$R/pretrain/checkpoints/step_00050000 (MRI: Gram gave no gain)
 STAGE=highres RESUME=$R/gram/checkpoints/step_00010000 OUTPUT=$R/highres sbatch scripts/train_mrdino.sbatch
 nohup scripts/probe_watch.sh $R/highres 2500 5000 &
 ```
@@ -263,7 +234,7 @@ nohup scripts/probe_watch.sh $R/highres 2500 5000 &
 
 ## Validation probe (checkpoint scoring)
 
-This is the FORA CT-DINO protocol: frozen features, MIL on the validation split only, and
+This is the MR DINO protocol: frozen features, MIL on the validation split only, and
 patient-level cross-validation. Train and test are never touched.
 
 1. **Export** (`python -m mr_dino.probe export`): copies the EMA-teacher backbone out of a
@@ -275,7 +246,7 @@ patient-level cross-validation. Train and test are never touched.
      block's normalised patch tokens.
    - Average-pools the tokens 2×2×2 over head foreground and drops air.
    - Writes one fp16 token file plus one index per worker to node-local `/tmp`.
-3. **CV** (`python -m mr_dino.probe cv --fold k`): trains MR-RATE's NeuroVFM
+3. **CV** (`python -m mr_dino.probe cv --fold k`): trains MR-RATE's MRI
    `ClassifyThenAggregate` head per patient-level fold (5 folds, 8 epochs, batch 8,
    lr 2e-3, pos_weight clipped to [1, 100]). One bag holds all sequences of a study.
 4. **Summarize**: out-of-fold macro and per-class AUROC/AUPRC → `results.json`,

@@ -1,17 +1,17 @@
 # =======================================================================
-# NeuroVFM MRI diagnosis extraction on MR-RATE reports, via Gemma (vLLM).
+# MRI MRI diagnosis extraction on MR-RATE reports, via Gemma (vLLM).
 #
-# Faithful reproduction of the NeuroVFM "MRI diagnosis extraction prompt"
+# Faithful reproduction of the MRI "MRI diagnosis extraction prompt"
 # (Supplementary Data Figure 6): an LLM-based annotation pipeline that
 # converts free-text radiology reports into structured labels for the 74
 # expert-defined MRI diagnoses. For EACH diagnosis the model returns a
 # present/absent label ("yes"/"no") plus a one-sentence rationale.
 #
-# Differences from the original NeuroVFM pipeline:
+# Differences from the original MRI pipeline:
 #   - Runs a local open-weights Gemma model through vLLM instead of the
 #     hosted GPT-4.1-mini (`--model_name`, default google/gemma-4-31B-it).
 #   - Gemma has NO system role, so the instruction block + report are sent
-#     as a single user turn (which is how the NeuroVFM prompt is structured
+#     as a single user turn (which is how the MRI prompt is structured
 #     anyway: one instruction preamble followed by the report).
 #
 # Input:  MR-RATE structured report CSVs (batch{NN}_reports.csv) with
@@ -67,12 +67,12 @@ from datetime import datetime, timezone
 
 
 # ============================================================
-# Prompt  (verbatim NeuroVFM MRI diagnosis extraction prompt)
+# Prompt  (verbatim MRI MRI diagnosis extraction prompt)
 # ============================================================
 
 # The instruction preamble. The diagnoses list is appended where the caption
 # reads "<diagnoses, refer to caption>", then the report is appended after.
-NEUROVFM_PROMPT = """\
+MRI_DIAGNOSIS_PROMPT = """\
 You, ChatGPT, are an expert neuroradiologist specializing in the interpretation of brain and spine MRI imaging reports. You will classify a radiology report according to the predefined list diagnoses below. This is a multilabel classification task, meaning a patient may have any number of these diagnoses (including none).
 
 Your job is to:
@@ -272,7 +272,7 @@ def main():
     from vllm import LLM, SamplingParams
 
     ap = argparse.ArgumentParser(
-        description="Extract the 74 NeuroVFM MRI diagnoses from MR-RATE "
+        description="Extract the 74 MRI MRI diagnoses from MR-RATE "
                     "reports with a local Gemma model via vLLM."
     )
     ap.add_argument("--reports_dir", required=True,
@@ -280,8 +280,8 @@ def main():
                          "(e.g. MR-RATE-validation/reports)")
     ap.add_argument("--diagnoses_json",
                     default=os.path.join(os.path.dirname(__file__),
-                                         "neurovfm_mri_diagnoses.json"),
-                    help="JSON with the 74 NeuroVFM diagnoses + guidance")
+                                         "mri_diagnoses_74.json"),
+                    help="JSON with the 74 MRI diagnoses + guidance")
     ap.add_argument("--output_dir", required=True,
                     help="Where to write labels_rank_{rank}.json")
     ap.add_argument("--model_name", default="google/gemma-4-31B-it",
@@ -332,7 +332,7 @@ def main():
         diagnoses = json.load(f)["diagnoses"]
     diagnosis_keys = [d["key"] for d in diagnoses]
     diagnoses_block = build_diagnoses_block(diagnoses)
-    prompt_preamble = NEUROVFM_PROMPT.format(diagnoses_block=diagnoses_block)
+    prompt_preamble = MRI_DIAGNOSIS_PROMPT.format(diagnoses_block=diagnoses_block)
     n_dx = len(diagnosis_keys)
     print(f"[Rank {rank}] Loaded {n_dx} diagnoses", flush=True)
 
@@ -410,7 +410,7 @@ def main():
         out = {
             "metadata": {
                 "model": args.model_name,
-                "prompt": "neurovfm_mri_diagnosis_extraction",
+                "prompt": "mri_mri_diagnosis_extraction",
                 "seed": args.seed,
                 "n_diagnoses": n_dx,
                 "diagnosis_keys": diagnosis_keys,

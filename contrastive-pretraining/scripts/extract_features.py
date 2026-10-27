@@ -21,7 +21,7 @@ trains and evaluates a linear classifier on the cached features in
 seconds — no need to re-encode the 3D volumes every epoch.
 
 Token mode stops immediately before MR-RATE's final masked mean. It is the
-required input for NeuroVFM-style Classify-Then-Aggregate MIL; pooled
+required input for class-specific Classify-Then-Aggregate MIL; pooled
 `features_*.npy` cannot be used for MIL because the instances are gone.
 
 Usage:
