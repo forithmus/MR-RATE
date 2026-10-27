@@ -1,4 +1,4 @@
-"""Tests for the recipe fixes ported from the FORA CT DINOv3 pipeline (mr_dino/recipe.py)."""
+"""Tests for the recipe fixes ported from the MR DINOv3 pipeline (mr_dino/recipe.py)."""
 import math
 
 import pytest

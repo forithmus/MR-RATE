@@ -109,6 +109,13 @@ SPACE_TO_IMG_SUBDIR = {
 CACHE_MANIFEST_NAME = "_manifest.json"
 
 
+def is_mri_image_file(filename):
+    name = str(filename).lower()
+    auxiliary = ("_brain-mask.nii.gz", "_defacing-mask.nii.gz", "_mask.nii.gz",
+                 "_seg.nii.gz", "_segmentation.nii.gz")
+    return name.endswith(".nii.gz") and not name.endswith(auxiliary)
+
+
 def list_nii_files(img_dir):
     """Sorted list of absolute *.nii.gz paths in img_dir (empty if it's missing)."""
     if not os.path.isdir(img_dir):
@@ -116,7 +123,7 @@ def list_nii_files(img_dir):
     return sorted(
         os.path.join(img_dir, f)
         for f in os.listdir(img_dir)
-        if f.endswith('.nii.gz')
+        if is_mri_image_file(f)
     )
 
 

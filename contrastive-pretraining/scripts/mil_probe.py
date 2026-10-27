@@ -1,7 +1,7 @@
 """
-NeuroVFM Classify-Then-Aggregate MIL on frozen MR-RATE token features.
+MRI Classify-Then-Aggregate MIL on frozen MR-RATE token features.
 
-The head matches NeuroVFM's diagnostic architecture while replacing only
+The head matches the diagnostic architecture while replacing only
 its visual encoder output with projected tokens from a contrastively
 pretrained MR-RATE checkpoint:
 
@@ -11,7 +11,7 @@ pretrained MR-RATE checkpoint:
 
 The encoder is frozen by construction: extract_features.py runs it once
 under no_grad/eval and this script trains only the MIL head. Standard
-nn.Linear is used instead of NeuroVFM's FlashAttention FusedDense; the
+nn.Linear is used instead of the FlashAttention FusedDense; the
 parameterization and computation are otherwise the same.
 
 Workflow:
@@ -45,7 +45,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 class PatchClassifier(nn.Module):
-    """NeuroVFM's shared MLP: Linear/GELU hidden blocks, then Linear."""
+    """the shared MLP: Linear/GELU hidden blocks, then Linear."""
 
     def __init__(self, dim: int, hidden_dims: tuple[int, ...], out_dim: int):
         super().__init__()
@@ -62,11 +62,11 @@ class PatchClassifier(nn.Module):
 
 
 class ClassifyThenAggregate(nn.Module):
-    """NeuroVFM's class-specific gated-attention MIL head.
+    """the class-specific gated-attention MIL head.
 
     Inputs are flat tokens from a batch of ragged bags plus cumulative bag
     boundaries. Softmax is independently normalized within each bag and
-    class, exactly matching NeuroVFM's segment_csr implementation.
+    class, exactly matching the segment_csr implementation.
     """
 
     def __init__(
@@ -439,7 +439,7 @@ def make_scheduler(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        "NeuroVFM Classify-Then-Aggregate MIL on frozen MR-RATE tokens"
+        "MRI Classify-Then-Aggregate MIL on frozen MR-RATE tokens"
     )
     parser.add_argument("--features_dir", type=str, required=True)
     parser.add_argument("--results_dir", type=str, default="./mil_probe_results")
@@ -543,7 +543,7 @@ def main() -> None:
         use_output_bias_scale=True,
     ).to(device)
     print(
-        f"NeuroVFM CTA head: dim={train_data.dim}, attention_hidden={args.hidden_dim}, "
+        f"MRI CTA head: dim={train_data.dim}, attention_hidden={args.hidden_dim}, "
         f"patch_mlp=[{args.mlp_hidden_dim}], classes={n_classes}"
     )
     print(
@@ -635,7 +635,7 @@ def main() -> None:
     print(f"Test mean AUROC: {test_mean:.4f}")
 
     architecture = {
-        "name": "NeuroVFM ClassifyThenAggregate",
+        "name": "MRI ClassifyThenAggregate",
         "dim": train_data.dim,
         "n_classes": n_classes,
         "hidden_dim": args.hidden_dim,

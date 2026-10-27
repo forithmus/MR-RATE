@@ -40,6 +40,10 @@ Each folder includes its own `README.md` detailing configuration, dependencies, 
 
 ## Workflow Summary
 
+For the Dong MR DINO checkpoints, full multi-sequence MIL (online/offline) and
+streaming contrastive VLM are documented in
+[`dino-pretraining/MIL_VLM.md`](dino-pretraining/MIL_VLM.md).
+
 1. **Download preprocessed data** directly from [MR-RATE on Hugging Face](https://huggingface.co/datasets/Forithmus/MR-RATE) (see `data-preprocessing/` for preprocessing details)
 2. **Train the contrastive model** on (multi-sequence MRI, radiology report) pairs using `contrastive-pretraining/`
 4. **Run zero-shot inference** for brain MRI pathology classification using trained model weights and `contrastive-pretraining/`

@@ -1,8 +1,8 @@
-# NeuroVFM MRI diagnosis extraction
+# MRI MRI diagnosis extraction
 
 This is the report-to-label pipeline used for the current MR-RATE clinical
 evaluation target. It classifies each report against the 74 expert-defined
-NeuroVFM MRI diagnoses and returns a binary label plus a short rationale for
+MRI MRI diagnoses and returns a binary label plus a short rationale for
 every diagnosis.
 
 The checked-in prompt, diagnosis order, guidance, JSON parser, and inference
@@ -13,15 +13,15 @@ the repository only to reproduce the historical 37-pathology labels.
 Run one or more Slurm ranks with:
 
 ```bash
-srun --gpu-bind=none python extract_neurovfm_dx_gemma.py \
+srun --gpu-bind=none python extract_mri_dx_gemma.py \
   --reports_dir /path/to/reports \
-  --diagnoses_json data/neurovfm_mri_diagnoses.json \
+  --diagnoses_json data/mri_diagnoses_74.json \
   --output_dir /path/to/shards
 
 python merge_labels.py \
   --input_dir /path/to/shards \
-  --output /path/to/neurovfm74_labels.csv \
-  --rationales /path/to/neurovfm74_rationales.json
+  --output /path/to/mri74_labels.csv \
+  --rationales /path/to/mri74_rationales.json
 ```
 
 Input files are named `batchNN_reports.csv` and require `study_uid`. The

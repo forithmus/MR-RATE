@@ -1,4 +1,4 @@
-"""Recipe fixes ported from the FORA CT DINOv3 pipeline (v13/v14, Sep 2026).
+"""Recipe fixes ported from the MR DINOv3 pipeline (v13/v14, Sep 2026).
 
 The CT pipeline started from the same DINOv3-7B recipe as this module and failed in ways we
 diagnosed and fixed one by one; every piece below is what the working CT ViT-L run uses:

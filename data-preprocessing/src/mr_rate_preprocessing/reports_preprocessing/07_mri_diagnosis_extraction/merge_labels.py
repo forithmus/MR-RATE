@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Merge per-rank labels_rank_*.json (from extract_neurovfm_dx_gemma.py) into a
-single wide CSV: study_uid + one 0/1 column per NeuroVFM diagnosis.
+Merge per-rank labels_rank_*.json (from extract_mri_dx_gemma.py) into a
+single wide CSV: study_uid + one 0/1 column per MRI diagnosis.
 
 Also writes an optional *_rationales.json keyed by study_uid if --rationales
 is given.
 
 Usage:
-  python merge_labels.py --input_dir /path/to/output --output neurovfm_labels.csv
+  python merge_labels.py --input_dir /path/to/output --output mri_labels.csv
 """
 import argparse
 import csv

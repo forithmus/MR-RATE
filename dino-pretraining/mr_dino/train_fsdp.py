@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", required=True)
     p.add_argument("--stage", choices=("pretrain", "gram", "highres"), default="pretrain")
     p.add_argument("--arch", choices=("tiny", "large", "hplus", "7b"), default="hplus",
-                   help="hplus = ViT-H+ 0.84B (MR default); large = ViT-L 0.30B (FORA CT); 7b kept for reference")
+                   help="hplus = ViT-H+ 0.84B (MR default); large = ViT-L 0.30B (MRI); 7b kept for reference")
     p.add_argument("--steps", type=int, default=50_000)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument(
@@ -124,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--compile", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--fp8", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--max-studies", type=int, default=None, help="Smoke only: cap studies per rank")
-    # FORA recipe fixes (see mr_dino/recipe.py)
+    # MR-RATE recipe fixes (see mr_dino/recipe.py)
     p.add_argument("--global-overlap", type=float, default=0.25, help="Minimum per-axis overlap of the two global crops")
     p.add_argument("--normalize-prototypes", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--position-bins", type=int, nargs=3, default=(2, 2, 2), help="Spatial Sinkhorn bins for patch targets; 1 1 1 disables")

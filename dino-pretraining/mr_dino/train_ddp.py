@@ -111,7 +111,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--activation-checkpointing", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--max-studies", type=int, default=None, help="Smoke only: cap studies assigned to each rank")
     p.add_argument("--deadline-margin-seconds", type=int, default=900)
-    # FORA recipe fixes (see mr_dino/recipe.py)
+    # MR-RATE recipe fixes (see mr_dino/recipe.py)
     p.add_argument("--global-overlap", type=float, default=0.25)
     p.add_argument("--normalize-prototypes", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--position-bins", type=int, nargs=3, default=(2, 2, 2))

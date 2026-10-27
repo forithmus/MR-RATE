@@ -41,7 +41,7 @@ if [[ -n "$end_ts" ]]; then
   export MRDINO_DEADLINE_EPOCH=$(( $(date -d "$end_ts" +%s) - 1200 ))
 fi
 
-# Phases 2/3 restart the schedule at step 0, so they need their own settings (FORA CT-DINO
+# Phases 2/3 restart the schedule at step 0, so they need their own settings (MR DINO
 # phase2_gram_recipe.args / phase3_hires_recipe.args): short warmup, teacher temperature fixed at
 # 0.07, EMA 0.996, no prototype freeze. Phase 3 has 4x the tokens per global crop -> batch 4 + checkpointing.
 # --lr is the peak at global batch 1024 and is sqrt-scaled to the real batch.
@@ -50,7 +50,7 @@ fi
 #   batch 4 no checkpointing 0.95 steps/s 83 GiB.
 #   highres crops (Gram on): batch 2 no checkpointing 128 GiB (too tight); batch 2 + checkpointing
 #   0.23 steps/s 43 GiB; batch 4 + checkpointing 0.10 steps/s 81 GiB.
-# Defaults keep the FORA global batch per phase on 4 nodes: 128 (phases 1-2), 64 (phase 3).
+# Defaults keep the MR-RATE global batch per phase on 4 nodes: 128 (phases 1-2), 64 (phase 3).
 ARCH=${ARCH:-hplus}
 FIXED_TEACHER=(--teacher-temperature 0.07 --teacher-warmup-temperature 0.07 --teacher-warmup-steps 1
                --teacher-momentum 0.996 --freeze-last-layer-steps 0)
@@ -81,7 +81,7 @@ if [[ -n "${SPLITS_CSV:-}" ]]; then
   SPLIT_ARGS=(--splits-csv "$SPLITS_CSV")
 fi
 
-echo "MR DINOv3 $ARCH (FORA recipe): stage=$STAGE nodes=$SLURM_NNODES output=$OUTPUT data=$DATA_FOLDER"
+echo "MR DINOv3 $ARCH (MR-RATE recipe): stage=$STAGE nodes=$SLURM_NNODES output=$OUTPUT data=$DATA_FOLDER"
 srun --nodes="$SLURM_NNODES" --ntasks="$SLURM_NNODES" --ntasks-per-node=1 \
   --kill-on-bad-exit=1 "$SCRIPT_DIR/train_node.sh" \
   --data-folder "$DATA_FOLDER" \

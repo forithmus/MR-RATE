@@ -259,15 +259,15 @@ python 06_pathology_classification/merge_labels.py \
     --output /path/to/labels.csv
 ```
 
-### 07_neurovfm_diagnosis_extraction
+### 07_mri_diagnosis_extraction
 
-This is the current clinical-evaluation labeler. It uses the NeuroVFM MRI
+This is the current clinical-evaluation labeler. It uses the MRI MRI
 diagnosis extraction prompt and the bundled 74-diagnosis schema, including
 the per-diagnosis guidance used for the completed MR-RATE re-extraction. It
 classifies the explicitly marked FINDINGS and IMPRESSION sections, emits a
 binary label and rationale for every key, retries malformed JSON once, and
 checkpoints atomically after every batch. See
-`07_neurovfm_diagnosis_extraction/README.md` for the run contract.
+`07_mri_diagnosis_extraction/README.md` for the run contract.
 
 The 37-label pipeline in step 06 is retained for historical reproducibility;
 report-generation clinical metrics use step 07 and reject the step-06 schema.

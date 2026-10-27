@@ -21,7 +21,7 @@ try:
 except ImportError as exc:  # pragma: no cover - actionable cluster error
     raise ImportError(
         "Official DINOv3 is required. Set DINOV3_ROOT and add it to PYTHONPATH; "
-        "see scripts/ctdino3d/README.md."
+        "see dino-pretraining/README.md."
     ) from exc
 
 

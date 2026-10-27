@@ -11,8 +11,8 @@ data:
   data_folder: /hnvme/workspace/b180dc51-sezgin/MR-RATE-validation/mri
   jsonl_file: /hnvme/workspace/b180dc51-sezgin/MR-RATE/contrastive-pretraining/data/findings_sentences.jsonl
   reports_csv: /hnvme/workspace/b180dc51-sezgin/MR-RATE-validation/reports/all_reports.csv
-  labels_file: /hnvme/workspace/b180dc51-sezgin/neurovfm_mrrate/splits_neurovfm74/mrrate_neurovfm74_labels.csv
-  splits_csv: /hnvme/workspace/b180dc51-sezgin/neurovfm_mrrate/splits_neurovfm74/splits.csv
+  labels_file: /hnvme/workspace/b180dc51-sezgin/mri_mrrate/splits_mri74/mrrate_mri74_labels.csv
+  splits_csv: /hnvme/workspace/b180dc51-sezgin/mri_mrrate/splits_mri74/splits.csv
   cached_tokens_dir: artifacts/exact_tokens
   use_preprocessed: false
   preprocessed_dir: null

@@ -1,3 +1,7 @@
 numpy
 nibabel
 torch>=2.6
+transformers>=4.51
+matplotlib
+scikit-learn
+pytest
