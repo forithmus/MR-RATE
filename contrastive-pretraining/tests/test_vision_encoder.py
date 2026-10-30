@@ -144,7 +144,7 @@ class TestVJEPA2EncoderStructure:
 class TestOptimizerImport:
     """Test that the optimizer utility from vision_encoder works."""
 
-    def test_get_optimizer_creates_adam(self):
+    def test_get_optimizer_creates_adamw(self):
         params = nn.Linear(10, 10).parameters()
         opt = get_optimizer(set(params), lr=1e-3, wd=0.01)
         assert opt is not None
