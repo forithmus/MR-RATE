@@ -28,7 +28,6 @@ from dinov3.layers.fp8_linear import convert_linears_to_fp8
 from .data import (
     ALIGNED_SPACES,
     DEFAULT_SPACE,
-    MRAlignedDINO3DDataset,
     InfiniteStudySampler,
     collate_dino3d,
     stage_crop_spec,
@@ -38,6 +37,9 @@ from .objective import DINO3DLearner, LossWeights
 from .recipe import cancel_last_layer_gradients, make_optimizer, missing_frozen_optimizer_keys
 from .train_ddp import (
     StopController,
+    add_input_channel_arguments,
+    input_channels,
+    make_dino_dataset,
     balanced_file_assignment,
     check_checkpoint_space,
     build_backbone,
@@ -113,6 +115,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gram-max-tokens", type=int, default=1024)
     p.add_argument("--ibot-loss-chunk-size", type=int, default=1024)
     p.add_argument("--cross-sequence-probability", type=float, default=0.25)
+    add_input_channel_arguments(p)
     p.add_argument("--candidate-trials", type=int, default=12)
     p.add_argument("--clip-grad", type=float, default=3.0)
     p.add_argument("--save-every", type=int, default=500)
@@ -243,7 +246,7 @@ def build_learner(args: argparse.Namespace, device: torch.device) -> DINO3DLearn
     if args.fp8:
         enable_fsdp_mixed_precision_fp8()
     with torch.device("meta"):
-        backbone = build_backbone(args.arch)
+        backbone = build_backbone(args.arch, input_channels(args))
         if args.fp8:
             backbone = convert_linears_to_fp8(backbone, filter="blocks")
         learner = DINO3DLearner(
@@ -481,20 +484,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRAlignedDINO3DDataset(
-        **dataset_kwargs,
-        splits_csv=args.splits_csv,
-        split=args.split,
-        space=args.space,
-        crop_spec=crop_spec,
-        target_spacing=tuple(args.target_spacing),
-        target_shape=tuple(args.target_shape),
-        posterior_shift_mm=args.posterior_shift_mm,
-        cross_sequence_probability=args.cross_sequence_probability,
-        candidate_trials=args.candidate_trials,
-        seed=args.seed,
-        global_overlap=args.global_overlap,
-    )
+    dataset, group_sizes = make_dino_dataset(args, dataset_kwargs, crop_spec)
     local_instances = torch.tensor(len(dataset), device=device, dtype=torch.long)
     total_instances = local_instances.clone()
     dist.all_reduce(total_instances)
@@ -504,7 +494,7 @@ def main() -> int:
     sampler = InfiniteStudySampler(
         len(dataset),
         seed=args.seed + rank * 7919,
-        group_sizes=[int(sample["n_sequences"]) for sample in dataset.samples],
+        group_sizes=group_sizes,
     )
 
     learner = build_learner(args, device)

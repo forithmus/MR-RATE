@@ -232,6 +232,19 @@ nohup scripts/probe_watch.sh $R/highres 2500 5000 &
 `train_32n_7b.sbatch` and `train_32n_hplus.sbatch` are the old 7B-continuation recipe
 (32-node DDP/FSDP) and are kept for reference only.
 
+## MIL ablations
+
+[`ABLATIONS.md`](ABLATIONS.md) describes three ablations of the 74-label MIL classifier, all run with the resumable
+multi-node trainer `dfw_mil.mil_fast` and `scripts/dfw/train_array.sbatch`.
+
+* **Training-data size.** `--train-fraction` trains on nested patient-level subsets (20, 40, 60, 80 %) with the
+  same validation set.
+* **Cross-sequence attention.** `--fusion cross_sequence` lets the tokens of all sequences at the same atlas position
+  attend to each other before the MIL head. It starts as the identity, so training begins from the baseline.
+* **Modalities as input channels.** `--input-channels modality` pretrains DINO on T1, T2, FLAIR and SWI as the
+  channels of one input (plus availability planes), `mr_dino.export_release` exports the backbone, and the MIL uses
+  it directly.
+
 ## Validation probe (checkpoint scoring)
 
 This is the MR DINO protocol: frozen features, MIL on the validation split only, and

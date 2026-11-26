@@ -1,0 +1,41 @@
+Diagnostic-plan prompt fragments of the MR writer. Read by mrrate_report/plan.py. Each fragment is the exact text
+between "[[name]]" + newline and newline + "[[/name]]"; newlines inside a fragment are part of the prompt.
+
+[[findings_instruction]]
+Generate only the complete English radiology Findings section from this brain MRI study. Be precise, include pertinent negatives, and do not produce an Impression or Conclusion.
+
+
+[[/findings_instruction]]
+
+[[sequences]]
+MRI sequences in this study: {sequences}.
+
+[[/sequences]]
+
+[[plan_header]]
+Predicted diagnostic plan from the frozen image classifier (verify every item against the images).
+
+[[/plan_header]]
+
+[[confident]]
+Confident findings: {confident}.
+
+[[/confident]]
+
+[[possible]]
+Possible findings (lower-confidence classifier signal; verify carefully): {possible}.
+
+[[/possible]]
+
+[[plan_footer]]
+These are candidates rather than output truth. Use the complete image and disease-specific visual evidence to accept, hedge, or reject them, and recover a supported finding even when its classifier score is below threshold.
+[[/plan_footer]]
+
+[[descriptions]]
+
+Parentheses give, for each finding, the classifier's calibrated probability and how it compares with how often the finding is reported on brain MRI (its base rate), the distribution of its image evidence (focal, multifocal with the number of sites, or diffuse; bilateral when both sides are involved), its main site and further sites as brain regions with the patient's right or left side, and the MRI sequences that hold most of the evidence. Use them when the images support them, keep the stated sides, describe multiple sites as a radiologist would, and treat low probabilities with caution.
+[[/descriptions]]
+
+[[evidence_tokens]]
+ The evidence tokens after a finding carry its attention-pooled image feature followed by image features from each evidence focus, with their position in the brain.
+[[/evidence_tokens]]

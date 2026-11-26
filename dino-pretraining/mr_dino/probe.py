@@ -37,6 +37,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .channels import n_input_channels
 from .data import (
     ALIGNED_SPACES,
     _load_split_ids,
@@ -78,7 +79,8 @@ def load_teacher_backbone(checkpoint: Path, device: torch.device | str = "cpu"):
         from .release import load_release
         return load_release(checkpoint, device)
     meta = read_checkpoint_metadata(checkpoint)
-    backbone = build_backbone(meta["args"]["arch"])
+    in_chans = n_input_channels() if meta["args"].get("input_channels", "sequence") == "modality" else 1
+    backbone = build_backbone(meta["args"]["arch"], in_chans)
     if checkpoint.is_dir():
         if not (checkpoint / "COMPLETE").exists():
             raise RuntimeError(f"Incomplete checkpoint: {checkpoint}")
@@ -215,6 +217,9 @@ def extract(args) -> Path:
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     backbone, meta = load_teacher_backbone(Path(args.checkpoint), device)
     train = meta["args"]
+    if train.get("input_channels", "sequence") == "modality":
+        raise ValueError("The per-sequence probe needs a one-channel backbone; score modality-channel "
+                         "backbones with dfw_mil.mil_fast on their exported release")
     args.space = args.space or train.get("space", "atlas_space")   # pre-coreg checkpoints were atlas
     if args.space != train.get("space", "atlas_space") and not args.allow_space_mismatch:
         raise ValueError(f"Checkpoint was trained on {train.get('space')!r}, probe asked for {args.space!r}")
