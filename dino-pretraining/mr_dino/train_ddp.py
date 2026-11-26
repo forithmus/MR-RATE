@@ -20,7 +20,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from .data import (
     ALIGNED_SPACES,
@@ -33,6 +33,8 @@ from .data import (
     npz_volume_shape,
     stage_crop_spec,
 )
+from .channels import n_input_channels
+from .data_channels import MRMultiChannelDINO3DDataset
 from .model import DinoVisionTransformer3D, vit_7b_3d, vit_hplus_3d, vit_large_3d
 from .recipe import cancel_last_layer_gradients, make_optimizer
 from .objective import DINO3DLearner, LossWeights
@@ -103,6 +105,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target-shape", type=int, nargs=3, default=(256, 384, 384))
     p.add_argument("--posterior-shift-mm", type=float, default=15.0)
     p.add_argument("--cross-sequence-probability", type=float, default=0.25)
+    add_input_channel_arguments(p)
     p.add_argument("--candidate-trials", type=int, default=12)
     p.add_argument("--save-every", type=int, default=500)
     p.add_argument("--keep-checkpoints", type=int, default=6)
@@ -323,12 +326,47 @@ def stage_files(files: list[str], root: str, rank: int) -> list[str]:
     return out
 
 
-def build_backbone(arch: str) -> DinoVisionTransformer3D:
+def add_input_channel_arguments(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--input-channels", choices=("sequence", "modality"), default="sequence",
+                   help="sequence: each MR sequence is a one-channel input; modality: T1/T2/FLAIR/SWI are the "
+                        "channels of one input, with one availability plane per modality")
+    p.add_argument("--full-modality-probability", type=float, default=0.5,
+                   help="modality inputs: probability that a view keeps every available modality")
+
+
+def input_channels(args: argparse.Namespace) -> int:
+    return n_input_channels() if getattr(args, "input_channels", "sequence") == "modality" else 1
+
+
+def make_dino_dataset(args: argparse.Namespace, dataset_kwargs: dict, crop_spec) -> tuple[Dataset, list[int]]:
+    """The SSL dataset and the per-study item counts its sampler groups together."""
+    common = dict(
+        **dataset_kwargs,
+        splits_csv=args.splits_csv,
+        split=args.split,
+        space=args.space,
+        crop_spec=crop_spec,
+        target_spacing=tuple(args.target_spacing),
+        target_shape=tuple(args.target_shape),
+        posterior_shift_mm=args.posterior_shift_mm,
+        cross_sequence_probability=args.cross_sequence_probability,
+        candidate_trials=args.candidate_trials,
+        seed=args.seed,
+        global_overlap=args.global_overlap,
+    )
+    if getattr(args, "input_channels", "sequence") == "modality":
+        dataset = MRMultiChannelDINO3DDataset(full_probability=args.full_modality_probability, **common)
+        return dataset, [1] * dataset.n_studies
+    dataset = MRAlignedDINO3DDataset(**common)
+    return dataset, [int(sample["n_sequences"]) for sample in dataset.samples]
+
+
+def build_backbone(arch: str, in_chans: int = 1) -> DinoVisionTransformer3D:
     common = dict(
         volume_size=(64, 384, 384),
         patch_size=(2, 16, 16),
         voxel_spacing_mm=(1.0, 0.5, 0.5),
-        in_chans=1,
+        in_chans=in_chans,
         n_storage_tokens=4,
         drop_path_rate=0.4 if arch == "7b" else (0.3 if arch != "tiny" else 0.0),
         layerscale_init=1e-5,
@@ -556,20 +594,7 @@ def main() -> int:
         local_shape=tuple(args.local_shape) if args.local_shape else base_crop_spec.local_shape,
         local_crops=args.local_crops,
     )
-    dataset = MRAlignedDINO3DDataset(
-        **dataset_kwargs,
-        splits_csv=args.splits_csv,
-        split=args.split,
-        space=args.space,
-        crop_spec=crop_spec,
-        target_spacing=tuple(args.target_spacing),
-        target_shape=tuple(args.target_shape),
-        posterior_shift_mm=args.posterior_shift_mm,
-        cross_sequence_probability=args.cross_sequence_probability,
-        candidate_trials=args.candidate_trials,
-        seed=args.seed,
-        global_overlap=args.global_overlap,
-    )
+    dataset, group_sizes = make_dino_dataset(args, dataset_kwargs, crop_spec)
     local_instances = torch.tensor(len(dataset), device=device, dtype=torch.long)
     total_instances = local_instances.clone()
     local_studies = torch.tensor(dataset.n_studies, device=device, dtype=torch.long)
@@ -580,7 +605,7 @@ def main() -> int:
     sampler = InfiniteStudySampler(
         len(dataset),
         seed=args.seed + rank * 7919,
-        group_sizes=[int(sample["n_sequences"]) for sample in dataset.samples],
+        group_sizes=group_sizes,
     )
     collate = functools.partial(
         collate_dino3d,
@@ -600,7 +625,7 @@ def main() -> int:
         collate_fn=collate,
     )
 
-    backbone = build_backbone(args.arch)
+    backbone = build_backbone(args.arch, input_channels(args))
     learner = DINO3DLearner(
         backbone,
         prototypes=args.prototypes,

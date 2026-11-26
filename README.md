@@ -24,6 +24,8 @@ MR-RATE/
 │
 ├── dino-pretraining/         # Self-supervised native 3-D DINOv3 on coregistered MRI
 │
+├── report-generation-fora/   # Report writer on the MIL classifier (diagnostic plan + Gemma-4-31B, SFT and DPO)
+│
 └── README.md
 ```
 
@@ -36,13 +38,17 @@ Each folder includes its own `README.md` detailing configuration, dependencies, 
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Data Preprocessing**      | End-to-end pipeline converting raw DICOM exports into clean, anonymized, and spatially standardized NIfTI volumes. Covers DICOM-to-NIfTI conversion, PACS metadata filtering, modality classification, binary brain segmentation & defacing, co-registration to a shared T1w reference, atlas registration to MNI152 space, and multi-label anatomical segmentations. Also includes the radiology report preprocessing pipeline (anonymization, translation, structuring, QC) and LLM-based pathology classification producing binary labels for 37 SNOMED CT-grounded pathologies. Includes standalone scripts for downloading and merging all MR-RATE Hugging Face repositories. |
 | **Contrastive Pretraining** | Contrastive vision-language model that aligns multi-sequence MRI volumes and radiology reports using VL-CABS loss. Uses a VJEPA2 (ViT-G) image encoder with LoRA fine-tuning and a BiomedVLP-CXR-BERT text encoder. Supports four multi-volume fusion modes (`early`, `mid_cnn`, `late`, `late_attn`) and three image spaces (`native_space`, `coreg_space`, `atlas_space`). Enables zero-shot brain MRI pathology classification at inference time. |
+| **Report Generation (MIL plan writer)** | Brain MRI Findings generation following the FORA recipe. The frozen 74-diagnosis MIL classifier reads every sequence of a study and gives a calibrated diagnostic plan with evidence descriptions (distribution, brain-region sites, sequences) and focus tokens for each planned finding. A Gemma-4-31B-it writer with LoRA reads the MIL tokens of the whole study and the plan, and is trained with SFT and then offline DPO on rule-based preference pairs. |
 | **3-D DINOv3 Pretraining** | Self-supervised DINO+iBOT+KoLeo training on coregistered multi-sequence MRI, with physical 3-D RoPE, exact per-sequence coverage, study-balanced weighting, FSDP2/FP8 production launchers, and synthetic end-to-end tests. |
 
 ## Workflow Summary
 
 For the Dong MR DINO checkpoints, full multi-sequence MIL (online/offline) and
 streaming contrastive VLM are documented in
-[`dino-pretraining/MIL_VLM.md`](dino-pretraining/MIL_VLM.md).
+[`dino-pretraining/MIL_VLM.md`](dino-pretraining/MIL_VLM.md). The MIL ablations (training-data size,
+cross-sequence attention, modalities as input channels) are described in
+[`dino-pretraining/ABLATIONS.md`](dino-pretraining/ABLATIONS.md). Report generation on top of the MIL classifier is
+described in [`report-generation-fora/README.md`](report-generation-fora/README.md).
 
 1. **Download preprocessed data** directly from [MR-RATE on Hugging Face](https://huggingface.co/datasets/Forithmus/MR-RATE) (see `data-preprocessing/` for preprocessing details)
 2. **Train the contrastive model** on (multi-sequence MRI, radiology report) pairs using `contrastive-pretraining/`
